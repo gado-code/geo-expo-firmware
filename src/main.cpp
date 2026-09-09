@@ -1,8 +1,9 @@
 /* ============================================================================
  *  GEO-EXPO ALERT  ·  Firmware etapa 1  (solo periféricos integrados)
  * ============================================================================
- *  Placa de desarrollo : ESP32 DevKit V1  (ESP32-WROOM-32, Xtensa LX6, BT clásico)
- *  Placa final (19-sep) : Heltec WiFi LoRa 32 V3 (ESP32-S3 + SX1262, NimBLE)
+ *  Placa : ESP32 DevKit V1  (ESP32-WROOM-32, Xtensa LX6, BT clásico)
+ *          La migración a la Heltec V3 quedó CANCELADA; los bloques
+ *          BOARD_HELTEC_V3 se conservan pero no se usan (README §7).
  *
  *  Esta etapa NO usa hardware externo (no hay protoboard, buzzer ni pulsadores):
  *      · Botón : BOOT en GPIO0  (activo en BAJO, con pull-up interno)
@@ -13,6 +14,9 @@
  *   2. Implementa la máquina de estados del botón de pánico + ventana de
  *      cancelación, 100 % no bloqueante (todo por millis()).
  *   3. Registra cada transición por el monitor serie, haya o no cliente BLE.
+ *   4. Integra el módulo GPS (lib/nmea): parsea tramas NMEA y mantiene la
+ *      última posición conocida. Todavía sin receptor físico, así que las
+ *      tramas se pueden inyectar a mano con el comando "NMEA" (§5).
  *
  *  --------------------------------------------------------------------------
  *  CONTRATO BLE (DEFINITIVO — no modificar, ya comprometido con el equipo de
@@ -30,12 +34,18 @@
  *  Mensajes que RECIBE por RX:
  *      "BEACON:ON"   -> activa la baliza (se simula: LED a 2 Hz)
  *      "BEACON:OFF"  -> la desactiva
+ *
+ *  Comandos EXTRA sólo de depuración (no forman parte del contrato):
+ *      "POS"          -> vuelca la última posición GPS conocida
+ *      "NMEA <trama>" -> inyecta una sentencia NMEA a mano
  * ==========================================================================*/
 
 #include <Arduino.h>
 #include <ctype.h>
 #include <string.h>
 #include <NimBLEDevice.h>
+
+#include "nmea.h"          // lib/nmea: parseo de tramas GPS (probado en test/)
 
 /* ==========================================================================
  *  1. CONFIGURACIÓN DE PINES
@@ -160,8 +170,116 @@ namespace led {
 } // namespace led
 
 /* ==========================================================================
- *  5. ESTADO GLOBAL Y BLE
+ *  5. MÓDULO GPS  (lib/nmea)
+ * --------------------------------------------------------------------------
+ *  ESTADO: el receptor GPS todavía NO está conectado a la placa. Por eso el
+ *  lector de UART2 está desactivado por defecto (GPS_UART_ENABLED = 0) y la
+ *  posición se puede alimentar A MANO inyectando tramas NMEA por el monitor
+ *  serie o por BLE:
+ *
+ *      NMEA $GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47
+ *      POS
+ *
+ *  Así el camino completo (trama -> parser -> posición -> mensaje) queda
+ *  probado hoy, y cuando llegue el módulo sólo hay que poner
+ *  GPS_UART_ENABLED a 1 y cablear TX del GPS a GPS_RX_PIN.
+ *
+ *  Cableado previsto (el GPS sólo necesita que le ESCUCHEMOS):
+ *      GPS VCC -> 3V3      GPS GND -> GND      GPS TX -> GPIO16 (RX2)
+ *  ATENCIÓN: muchos módulos NEO-6M son de 5 V en VCC pero su TX saca 3,3 V,
+ *  que es lo que espera el ESP32. No conectes TX del ESP32 al RX del GPS sin
+ *  comprobar niveles: aquí no hace falta.
  * ==========================================================================*/
+/* trace() se define más abajo (§6); aquí basta con declararla. */
+static void trace(const char* msg);
+
+#ifndef GPS_UART_ENABLED
+  #define GPS_UART_ENABLED 0        // 1 = leer de verdad del GPS por UART2
+#endif
+#ifndef GPS_RX_PIN
+  #define GPS_RX_PIN 16             // GPIO16 = RX2 en la DevKit V1
+#endif
+#ifndef GPS_BAUD
+  #define GPS_BAUD 9600             // valor de fábrica de NEO-6M / NEO-7M
+#endif
+
+namespace gps {
+
+  static nmea::Parser s_parser;
+  static uint32_t     s_tLastFix  = 0;      // millis() del último fix válido
+  static bool         s_everFixed = false;
+
+  void begin() {
+#if GPS_UART_ENABLED
+    // Sólo RX: al GPS no le mandamos nada, así que TX queda sin asignar (-1).
+    Serial2.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, -1);
+    trace("GPS: UART2 abierto, escuchando tramas NMEA");
+#else
+    trace("GPS: sin modulo fisico (usa el comando NMEA para inyectar tramas)");
+#endif
+  }
+
+  // Anota que acabamos de recibir una posición utilizable.
+  static void noteFix(uint32_t now) { s_tLastFix = now; s_everFixed = true; }
+
+  void poll(uint32_t now) {
+#if GPS_UART_ENABLED
+    // Se limita el número de bytes por vuelta para no bloquear el loop() si
+    // el GPS escupe una ráfaga entera de sentencias.
+    for (int i = 0; i < 96 && Serial2.available(); ++i) {
+      if (s_parser.feed((char)Serial2.read()) && s_parser.fix().valid) noteFix(now);
+    }
+#else
+    (void)now;
+#endif
+  }
+
+  // Inyección manual de una trama (comando "NMEA ..."), para probar sin GPS.
+  bool inject(const char* line, uint32_t now) {
+    const bool ok = s_parser.feedLine(line);
+    if (ok && s_parser.fix().valid) noteFix(now);
+    return ok;
+  }
+
+  const nmea::Fix& fix()  { return s_parser.fix(); }
+  bool             has()  { return s_parser.fix().valid; }
+  uint32_t         ageMs(uint32_t now) { return s_everFixed ? (now - s_tLastFix) : 0; }
+
+  /* Escribe "LAT;LON" en `out` con 6 decimales (~11 cm, de sobra).
+   * Devuelve false si no hay posición: el llamante decide qué hacer. */
+  bool format(char* out, size_t cap) {
+    if (!has()) return false;
+    snprintf(out, cap, "%.6f;%.6f", s_parser.fix().lat, s_parser.fix().lon);
+    return true;
+  }
+
+  void printStatus(uint32_t now) {
+    const nmea::Fix& f = s_parser.fix();
+    Serial.printf("[t=%8lu ms] GPS  tramas OK=%lu  descartadas=%lu\n",
+                  (unsigned long)now,
+                  (unsigned long)s_parser.okCount(),
+                  (unsigned long)s_parser.badCount());
+    if (!f.valid) {
+      Serial.println("             sin posicion valida (aun no hay fix)");
+      return;
+    }
+    // sats/hdop/alt sólo vienen en GGA: tras una RMC son los de la última GGA.
+    Serial.printf("             lat=%.6f  lon=%.6f  sats=%u  hdop=%.1f  alt=%.1f m (ultima GGA)\n",
+                  f.lat, f.lon, (unsigned)f.sats, f.hdop, f.altM);
+    Serial.printf("             UTC %02u:%02u:%02u  antiguedad del fix: %lu ms\n",
+                  (unsigned)f.hh, (unsigned)f.mm, (unsigned)f.ss,
+                  (unsigned long)ageMs(now));
+  }
+
+} // namespace gps
+
+/* ==========================================================================
+ *  6. ESTADO GLOBAL Y BLE
+ * ==========================================================================*/
+/* Tamaño de los buffers de comandos. Una sentencia NMEA puede ocupar 82
+ * caracteres y el prefijo "NMEA " suma 5 más, así que 128 va sobrado. */
+static const size_t CMD_BUF_SIZE = 128;
+
 static NimBLECharacteristic* g_txChar = nullptr;
 static volatile bool         g_bleConnected = false;
 static bool                  g_beaconActive = false;   // estado lógico de la baliza
@@ -169,7 +287,7 @@ static bool                  g_beaconActive = false;   // estado lógico de la b
 // Cola mínima RX: los WRITE del cliente se copian aquí y se procesan en
 // loop(); NUNCA se hace trabajo pesado dentro del callback de NimBLE.
 static volatile bool  g_rxPending = false;
-static char           g_rxBuf[40];
+static char           g_rxBuf[CMD_BUF_SIZE];
 static portMUX_TYPE   g_rxMux = portMUX_INITIALIZER_UNLOCKED;
 
 /* ---- Trazas -------------------------------------------------------------- */
@@ -177,15 +295,49 @@ static void trace(const char* msg) {
   Serial.printf("[t=%8lu ms] %s\n", (unsigned long)millis(), msg);
 }
 
+/* ==========================================================================
+ *  ¿Se adjunta la posición a las alertas?
+ * --------------------------------------------------------------------------
+ *  El contrato BLE de la §3 está CONGELADO con el equipo de la app: hoy sólo
+ *  espera "ALERT:1", "ALERT:2" y "CANCEL". Enviar "ALERT:1;4.205760;-74.094648"
+ *  por las buenas rompería su parser, así que la extensión queda DESACTIVADA
+ *  por defecto y el firmware sigue cumpliendo el contrato al pie de la letra.
+ *
+ *  Propuesta a acordar con ellos antes de activarla:
+ *      ALERT:1;<lat>;<lon>     lat/lon en grados decimales con 6 decimales
+ *      ALERT:1                 exactamente igual que hoy cuando no hay fix
+ *  Es compatible hacia atrás si su parser corta por el primer ';'.
+ *
+ *  Para probarla:  pio run -e devkit_v1 -t upload
+ *                  (tras poner ALERT_WITH_POSITION a 1, o -D ALERT_WITH_POSITION=1)
+ * ==========================================================================*/
+#ifndef ALERT_WITH_POSITION
+  #define ALERT_WITH_POSITION 0
+#endif
+
 /* ---- Emisión por TX: BLE NOTIFY si hay cliente, y SIEMPRE por serie ------ */
 static void emitTx(const char* token) {
-  Serial.printf("[t=%8lu ms] >>> TX  %-8s  %s\n",
-                (unsigned long)millis(), token,
+  // El mensaje que sale por el aire. Por defecto es el token tal cual.
+  char msg[64];
+  snprintf(msg, sizeof(msg), "%s", token);
+
+#if ALERT_WITH_POSITION
+  // Sólo las alertas llevan posición; "CANCEL" no la necesita.
+  if (strncmp(token, "ALERT", 5) == 0) {
+    char pos[32];
+    if (gps::format(pos, sizeof(pos))) {
+      snprintf(msg, sizeof(msg), "%s;%s", token, pos);
+    }
+  }
+#endif
+
+  Serial.printf("[t=%8lu ms] >>> TX  %-24s  %s\n",
+                (unsigned long)millis(), msg,
                 g_bleConnected ? "(enviado por BLE)"
                                : "(sin cliente BLE: registrado solo en serie)");
   if (g_txChar && g_bleConnected) {
-    char buf[24];
-    int n = snprintf(buf, sizeof(buf), "%s\n", token);   // contrato: termina en '\n'
+    char buf[72];
+    int n = snprintf(buf, sizeof(buf), "%s\n", msg);     // contrato: termina en '\n'
     g_txChar->setValue(reinterpret_cast<uint8_t*>(buf), n);
     g_txChar->notify();
   }
@@ -220,7 +372,7 @@ class RxCB : public NimBLECharacteristicCallbacks {
 };
 
 /* ==========================================================================
- *  6. INICIALIZACIÓN BLE
+ *  7. INICIALIZACIÓN BLE
  * ==========================================================================*/
 static void bleBegin() {
   NimBLEDevice::init(DEVICE_NAME);
@@ -247,13 +399,13 @@ static void bleBegin() {
 }
 
 /* ==========================================================================
- *  7. PROCESAMIENTO DE COMANDOS RX  (BLE o serie)
+ *  8. PROCESAMIENTO DE COMANDOS RX  (BLE o serie)
  * ==========================================================================*/
 static void printHelp();
 
 static void handleCommand(const char* rawCmd) {
   // Normaliza: quita CR/LF, pasa a mayúsculas, recorta espacios.
-  char cmd[40];
+  char cmd[CMD_BUF_SIZE];
   size_t j = 0;
   for (size_t i = 0; rawCmd[i] && j < sizeof(cmd) - 1; ++i) {
     char ch = rawCmd[i];
@@ -272,6 +424,17 @@ static void handleCommand(const char* rawCmd) {
     g_beaconActive = false;
     led::setBeacon(false);
     trace("RX  BEACON:OFF  -> baliza DESACTIVADA");
+  } else if (strncmp(cmd, "NMEA ", 5) == 0) {
+    // Inyecta una trama a mano: permite probar el GPS sin tener el módulo.
+    const uint32_t now = millis();
+    if (gps::inject(cmd + 5, now)) {
+      trace("RX  NMEA        -> trama ACEPTADA (checksum correcto)");
+    } else {
+      trace("RX  NMEA        -> trama DESCARTADA (checksum o formato malos)");
+    }
+    gps::printStatus(now);
+  } else if (strcmp(cmd, "POS") == 0 || strcmp(cmd, "GPS") == 0) {
+    gps::printStatus(millis());
   } else if (strcmp(cmd, "?") == 0 || strcmp(cmd, "HELP") == 0) {
     printHelp();
   } else {
@@ -283,7 +446,7 @@ static void handleCommand(const char* rawCmd) {
 /* ---- Vaciar la cola RX de BLE (se llama desde loop()) ----------------- */
 static void blePollRx() {
   if (!g_rxPending) return;
-  char local[40];
+  char local[CMD_BUF_SIZE];
   portENTER_CRITICAL(&g_rxMux);
   strncpy(local, g_rxBuf, sizeof(local));
   local[sizeof(local) - 1] = '\0';
@@ -295,7 +458,7 @@ static void blePollRx() {
 
 /* ---- Comandos por el monitor serie (para probar SIN celular) ---------- */
 static void serialPoll() {
-  static char   line[40];
+  static char   line[CMD_BUF_SIZE];
   static size_t len = 0;
   while (Serial.available()) {
     char c = (char)Serial.read();
@@ -314,7 +477,7 @@ static void serialPoll() {
 }
 
 /* ==========================================================================
- *  8. MÁQUINA DE ESTADOS DEL BOTÓN
+ *  9. MÁQUINA DE ESTADOS DEL BOTÓN
  * --------------------------------------------------------------------------
  *  Estados: IDLE -> DEBOUNCE -> PRESSED -> CANCEL_WINDOW -> IDLE
  *
@@ -322,6 +485,7 @@ static void serialPoll() {
  *  · Pulsación larga  : mantener 3 s        -> "ALERT:2" EN EL INSTANTE de los
  *                       3 s (sin esperar a soltar) + ventana de cancelación
  *  · Ventana (10 s)   : cualquier pulsación nueva -> "CANCEL" y vuelta a IDLE
+ *  · Tras un CANCEL   : no se arma otra pulsación hasta soltar el botón
  *  · Ventana expira   : vuelta a IDLE (la alerta queda CONFIRMADA)
  *  · Antirrebote de 50 ms aplicado al flanco de bajada Y al de subida.
  * ==========================================================================*/
@@ -333,6 +497,7 @@ static uint32_t    g_tPressed      = 0;    // pulsación confirmada (para contar
 static uint32_t    g_tCancelStart  = 0;    // inicio de la ventana de cancelación
 static uint32_t    g_tRawChange    = 0;    // último cambio del nivel crudo (antirrebote de subida)
 static int         g_lastRaw       = HIGH;
+static int         g_idlePrevRaw   = HIGH;  // nivel previo en IDLE (para exigir flanco real)
 static bool        g_longFired     = false;
 static bool        g_cancelArmed   = false;
 
@@ -358,12 +523,18 @@ static void fsmUpdate(uint32_t now) {
   switch (g_st) {
 
     /* ---------------------------------------------------------------- */
-    case ST_IDLE:
-      if (raw == LOW) {
+    case ST_IDLE: {
+      // Se exige un flanco real HIGH->LOW. Si se entra a IDLE con el botón
+      // aún pulsado (tras un CANCEL, o si la placa arranca con BOOT pulsado)
+      // hay que esperar a que se suelte antes de armar una pulsación nueva.
+      const bool flancoBajada = (raw == LOW && g_idlePrevRaw == HIGH);
+      g_idlePrevRaw = raw;
+      if (flancoBajada) {
         g_tDebounce = now;
         go(ST_DEBOUNCE, "flanco de bajada detectado");
       }
       break;
+    }
 
     /* ---------------------------------------------------------------- */
     case ST_DEBOUNCE:
@@ -441,13 +612,16 @@ static void fsmUpdate(uint32_t now) {
 }
 
 /* ==========================================================================
- *  9. BANNER / AYUDA
+ *  10. BANNER / AYUDA
  * ==========================================================================*/
 static void printHelp() {
   Serial.println();
   Serial.println("  Comandos por el monitor serie (equivalen a un WRITE en RX):");
   Serial.println("     BEACON:ON    activa la baliza (LED a 2 Hz)");
   Serial.println("     BEACON:OFF   desactiva la baliza");
+  Serial.println("     POS          muestra la ultima posicion GPS conocida");
+  Serial.println("     NMEA <trama> inyecta una sentencia NMEA a mano, por ejemplo:");
+  Serial.println("                  NMEA $GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47");
   Serial.println("     ?            muestra esta ayuda");
   Serial.println("  El botón de pánico es físico: BOOT (GPIO0) en la placa.");
   Serial.println();
@@ -466,6 +640,10 @@ static void printBanner() {
   Serial.println("    TX NOTIFY: 6E400003-... (ESP32 -> app)");
   Serial.println("    RX WRITE : 6E400002-... (app  -> ESP32)");
   Serial.println("------------------------------------------------------------");
+  Serial.printf ("  GPS              : %s   posicion en las alertas: %s\n",
+                 GPS_UART_ENABLED ? "UART2 activo" : "sin modulo (inyeccion manual)",
+                 ALERT_WITH_POSITION ? "SI" : "NO (contrato congelado)");
+  Serial.println("------------------------------------------------------------");
   Serial.printf ("  DEBOUNCE_MS=%lu  LONG_PRESS_MS=%lu  CANCEL_WINDOW_MS=%lu\n",
                  (unsigned long)DEBOUNCE_MS, (unsigned long)LONG_PRESS_MS,
                  (unsigned long)CANCEL_WINDOW_MS);
@@ -474,7 +652,7 @@ static void printBanner() {
 }
 
 /* ==========================================================================
- *  10. setup() / loop()
+ *  11. setup() / loop()
  * ==========================================================================*/
 void setup() {
   Serial.begin(115200);
@@ -482,9 +660,11 @@ void setup() {
   while (!Serial && (millis() - t0) < 2000) { /* espera opcional al USB-CDC (S3) */ }
 
   pinMode(PIN_BUTTON, INPUT_PULLUP);
+  g_idlePrevRaw = digitalRead(PIN_BUTTON);   // arrancar con BOOT pulsado no cuenta como flanco
   led::begin();
 
   printBanner();
+  gps::begin();
   bleBegin();
   trace("BLE: advertising iniciado como \"GEOEXPO-ALERT\"");
   trace("Sistema listo. Estado inicial: IDLE");
@@ -495,6 +675,7 @@ void loop() {
 
   blePollRx();          // comandos recibidos por BLE
   serialPoll();         // comandos recibidos por el monitor serie
+  gps::poll(now);       // tramas NMEA del receptor GPS (si está conectado)
   fsmUpdate(now);       // máquina de estados del botón
   led::update(now);     // realimentación visual
 

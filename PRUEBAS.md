@@ -67,6 +67,26 @@ Monitor serie a **115200 bps**. App móvil: **nRF Connect for Mobile**.
 
 ---
 
+## 3.bis. Módulo GPS sin receptor físico
+
+Las tramas se inyectan por el monitor serie (o por BLE con un WRITE en RX: es
+el mismo manejador). Copia las tramas **enteras**, con `$` y `*HH`.
+
+| # | Qué escribes | Qué debe salir | OK |
+|---|---|---|:--:|
+| 3b.1 | `POS` (recién arrancada) | `GPS  tramas OK=0  descartadas=0` y `sin posicion valida` | ☐ |
+| 3b.2 | `NMEA $GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47` | `trama ACEPTADA` · `lat=48.117300  lon=11.516667  sats=8` | ☐ |
+| 3b.3 | `POS` otra vez | La misma posición, con la antigüedad del fix creciendo | ☐ |
+| 3b.4 | `NMEA $GNRMC,041515.00,A,0412.3456,N,07405.6789,W,0.06,,090926,,,A*4F` | `lat=4.205760  lon=-74.094648` (longitud **negativa**: oeste) | ☐ |
+| 3b.5 | La trama de 3b.2 cambiando `*47` por `*40` | `trama DESCARTADA` · `descartadas=1` · la posición anterior **no cambia** | ☐ |
+| 3b.6 | `NMEA $GPGGA,123519,,,,,0,00,,,M,,M,,*6B` | Trama aceptada (`OK` sube) pero `sin posicion valida`: calidad 0 | ☐ |
+| 3b.7 | `pio test -e devkit_v1` | 16 pruebas, todas `PASSED` | ☐ |
+
+> 3b.5 es la prueba importante: un checksum malo **nunca** debe corromper la
+> última posición buena. Es lo que separa una posición fiable de una inventada.
+
+---
+
 ## 4. Verificación final (la checklist del enunciado)
 
 | # | Requisito | Casos que lo cubren | OK |
@@ -75,6 +95,7 @@ Monitor serie a **115200 bps**. App móvil: **nRF Connect for Mobile**.
 | V2 | El dispositivo aparece como `GEOEXPO-ALERT` al escanear con nRF Connect | 3.1 | ☐ |
 | V3 | Al pulsar llegan los mensajes correctos a nRF Connect | 3.5, 3.6, 3.7 | ☐ |
 | V4 | Al escribir `BEACON:ON` desde nRF Connect el LED empieza a parpadear | 3.8 | ☐ |
+| V5 | El firmware sabe convertir tramas NMEA en una posición | 3b.2–3b.7 | ☐ |
 
 ---
 

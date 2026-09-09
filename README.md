@@ -20,6 +20,68 @@ a 2 Hz e imprimiendo en serie.
 
 ---
 
+## 0. Punto de continuación — 9-sep-2026
+
+**Estado: etapa 1 verificada en la placa + módulo GPS escrito y probado.**
+
+### Hecho hasta ahora
+
+- Placa detectada en **`/dev/ttyUSB0`**, chip **CP2102** (`10c4:ea60`),
+  ESP32-D0WD-V3 rev 3.1, MAC `3c:8a:1f:a7:31:d8`.
+- Firmware flasheado y probado en la placa: antirrebote, `ALERT:1`, `ALERT:2`
+  a los 3000 ms exactos, `CANCEL` dentro de la ventana, confirmación al
+  expirar los 10 s, comandos por serie y BLE anunciándose como `GEOEXPO-ALERT`.
+- **Corregido el re-disparo tras `CANCEL`** (`ST_IDLE` disparaba por nivel en
+  vez de por flanco, así que cada `CANCEL` generaba un `ALERT:1` fantasma).
+- **`platformio.ini`**: `upload_speed` bajado a **115200** (460800 y 921600
+  fallan con este cable: `Unable to verify flash chip connection`) y quitado
+  el filtro `colorize`, que la pyserial del sistema no conoce.
+- **Módulo GPS nuevo** (`lib/nmea/`) con **16 pruebas automáticas que pasan en
+  la placa** y comandos `POS` / `NMEA <trama>` para probarlo sin GPS físico.
+  Ver la §8.
+
+### Lo único que falta comprobar a mano
+
+⚠️ El arreglo del `CANCEL` está flasheado pero **no probado con el dedo**.
+Secuencia: pulsación corta → esperar a `ALERT:1` → dentro de los 10 s pulsar
+otra vez **manteniendo el dedo un par de segundos**. Debe salir **solo**
+`CANCEL`, sin ningún `ALERT:1` posterior.
+
+Y la §5.C (BLE con nRF Connect desde el móvil) sigue sin hacerse: en todas las
+pruebas salió `sin cliente BLE: registrado solo en serie`.
+
+### Decisiones que siguen abiertas
+
+1. **Formato de la posición en los mensajes BLE.** Está implementado pero
+   **desactivado** (`ALERT_WITH_POSITION`, `src/main.cpp` §6), porque el
+   contrato de la §1 está congelado con el equipo de la app. La propuesta a
+   acordar con ellos es `ALERT:1;<lat>;<lon>`. Detalle en la §8.3.
+2. **Botón definitivo.** El pin es la constante `PIN_BUTTON` (`src/main.cpp`
+   §1), así que sólo hay que cambiar el número. Pero **no uses GPIO0, 2, 12 ni
+   15**: son *strapping pins* y pueden impedir el arranque. Libres y seguros:
+   GPIO4, 5, 18, 19, 21. El código asume `INPUT_PULLUP` con el botón a masa
+   (LOW = pulsado); si se cablea al revés hay que invertir la lógica.
+3. **Buzzer.** Llegan 20 buzzers piezo pasivos el 19-sep; hoy la baliza se
+   simula con el LED a 2 Hz.
+
+### Notas de entorno
+
+- **No hay compilador de C/C++ en el sistema**, así que `pio test -e native`
+  (las pruebas en el PC) no puede correr todavía. Se arregla con:
+  ```bash
+  sudo dnf install gcc-c++
+  ```
+  Mientras tanto las mismas pruebas se ejecutan **en la placa**, que es igual
+  de válido: `pio test -e devkit_v1`.
+- `pio device monitor` **no funciona desde Claude Code**: necesita una TTY real
+  y falla con `termios.error: Inappropriate ioctl for device`. Desde ahí hay
+  que leer el puerto con un script de pyserial. En una terminal normal va bien.
+- Sólo un proceso a la vez debe tener abierto `/dev/ttyUSB0`; si no, se
+  reparten los bytes y ambos ven la salida a trozos. Comprobar con
+  `fuser -v /dev/ttyUSB0`.
+
+---
+
 ## 1. Contrato de interfaz BLE (definitivo)
 
 | Elemento | Valor |
@@ -87,15 +149,15 @@ El antirrebote de 50 ms se aplica **al flanco de bajada y al de subida**.
 
 ## 3. Preparación del entorno (Fedora)
 
-> Diagnóstico de **tu** equipo (usuario `dj4do`, Fedora 44):
+> Estado de **tu** equipo (usuario `dj4do`, Fedora 44) — comprobado el 9-sep:
 >
-> - **NO estás en el grupo `dialout`.** Es la causa nº 1 de
->   *"permission denied"* al abrir el puerto serie en Fedora. **Hay que
->   arreglarlo** (paso 3.1).
-> - No hay ninguna placa conectada ahora, así que el puerto (`/dev/ttyUSB0` o
->   `/dev/ttyACM0`) se confirmará al enchufarla (paso 3.4).
-> - No tienes instalado PlatformIO ni arduino-cli. Fedora empaqueta
->   `platformio 6.1.19` (paso 3.3).
+> - ✅ **Ya estás en el grupo `dialout`**, así que el paso 3.1 está hecho.
+>   Se deja documentado por si hay que repetirlo en otro equipo.
+> - ✅ **Placa conectada en `/dev/ttyUSB0`** (CP2102). El cable de solo carga
+>   era el problema; con el cable de datos enumera bien.
+> - ✅ PlatformIO instalado (`pio`, Core 6.1.19 del paquete de Fedora).
+> - ❌ **Falta el compilador del sistema** si quieres correr las pruebas en el
+>   PC: `sudo dnf install gcc-c++` (ver §8.4).
 
 ### 3.1. Añadir tu usuario al grupo `dialout`
 
@@ -215,6 +277,12 @@ pio device monitor -e devkit_v1
 pio run -e devkit_v1 -t upload -t monitor
 ```
 
+> ⚠️ **Velocidad de flasheo.** `upload_speed` está en **115200** a propósito.
+> Con el cable actual, 460800 y 921600 fallan con
+> `A fatal error occurred: Unable to verify flash chip connection (No serial
+> data received.)`. Si algún día cambias de cable puedes probar a subirla; si
+> falla, vuelve a 115200 en vez de pelearte con el error.
+
 **Si el flasheo falla con `Failed to connect ... Wrong boot mode detected`:**
 mantén pulsado **BOOT**, pulsa y suelta **EN/RST**, suelta **BOOT**, y repite
 `-t upload`. Con las reglas udev del paso 3.2 esto no suele hacer falta.
@@ -235,7 +303,12 @@ Salida esperada del monitor al arrancar:
   BLE  Nordic UART Service
     Nombre   : GEOEXPO-ALERT
     ...
+------------------------------------------------------------
+  GPS              : sin modulo (inyeccion manual)   posicion en las alertas: NO (contrato congelado)
+------------------------------------------------------------
+  DEBOUNCE_MS=50  LONG_PRESS_MS=3000  CANCEL_WINDOW_MS=10000
 ============================================================
+[t=     ... ms] GPS: sin modulo fisico (usa el comando NMEA para inyectar tramas)
 [t=     ... ms] BLE: advertising iniciado como "GEOEXPO-ALERT"
 [t=     ... ms] Sistema listo. Estado inicial: IDLE
 ```
@@ -316,9 +389,19 @@ monitor + comportamiento del LED) y lo depuramos.
 
 ---
 
-## 7. Migración a Heltec WiFi LoRa 32 V3 (ESP32-S3) — 19-sep
+## 7. Migración a Heltec WiFi LoRa 32 V3 (ESP32-S3) — ❌ CANCELADA
 
-Ya hay un entorno preparado: `pio run -e heltec_v3`.
+> **Esta migración NO se va a hacer.** El pedido de la Heltec se canceló el
+> 8-sep, así que **todo el proyecto se queda en la ESP32 DevKit V1** y no hay
+> LoRa en ninguna etapa.
+>
+> El entorno `heltec_v3` de `platformio.ini` y los `#if defined(BOARD_HELTEC_V3)`
+> de `src/main.cpp` se conservan porque siguen compilando y no estorban, pero
+> son **material muerto**: no los tomes como trabajo pendiente. El resto de
+> esta sección queda sólo como referencia, por si algún día se retoma otra
+> placa.
+
+Entorno preparado (sin uso): `pio run -e heltec_v3`.
 
 ### Qué cambia automáticamente (ya resuelto en el código)
 
@@ -354,24 +437,128 @@ Ya hay un entorno preparado: `pio run -e heltec_v3`.
 
 ---
 
-## 8. Estructura del proyecto
+## 8. Módulo GPS (`lib/nmea`)
+
+El receptor GPS todavía no está en la placa, pero **todo el software que lo
+usará ya está escrito y probado**. Es la parte que se podía adelantar sin
+hardware, y así cuando llegue el módulo sólo hay que cablearlo.
+
+### 8.1. Qué hace
+
+`lib/nmea/` convierte las tramas **NMEA 0183** que escupe cualquier GPS en una
+posición utilizable:
+
+| Aspecto | Cómo está resuelto |
+|---|---|
+| **Sentencias** | `GGA` (posición, calidad, satélites, altitud) y `RMC` (posición, validez, fecha/hora, velocidad). Cualquier otra se valida y se ignora. |
+| **Talkers** | `GP`, `GN`, `GL`, `GA`, `BD`… — se mira sólo el tipo, no el prefijo. |
+| **Checksum** | Se comprueba siempre. Una trama corrupta se descarta y no toca la posición conocida. |
+| **Coordenadas** | Se convierten de `ddmm.mmmm` + hemisferio a **grados decimales con signo** (+ norte, + este), en `double` para no perder precisión. |
+| **Robustez** | Entrada carácter a carácter, sin `malloc`, con buffer acotado; un `$` resincroniza el parser tras una trama cortada. |
+
+El módulo **no incluye `<Arduino.h>`** a propósito: así se puede compilar y
+probar fuera de la placa.
+
+### 8.2. Cómo probarlo HOY, sin GPS
+
+Dos formas, y las dos funcionan ya:
+
+**a) Pruebas automáticas** (16 casos: hemisferios negativos, checksum roto,
+trama sin fix, desbordamiento, flujo con ruido…):
+
+```bash
+pio test -e devkit_v1      # se ejecutan EN LA PLACA
+pio test -e native         # en el PC; necesita gcc-c++ (§8.4)
+```
+
+**b) Inyectando tramas a mano** por el monitor serie (o por BLE, es el mismo
+manejador de comandos):
+
+```
+POS
+NMEA $GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47
+POS
+```
+
+Respuesta esperada:
+
+```
+[t=    4438 ms] RX  NMEA        -> trama ACEPTADA (checksum correcto)
+[t=    4437 ms] GPS  tramas OK=1  descartadas=0
+             lat=48.117300  lon=11.516667  sats=8  hdop=0.9  alt=545.4 m (ultima GGA)
+             UTC 12:35:19  antiguedad del fix: 0 ms
+```
+
+Si le cambias un dígito al checksum, la trama debe salir **DESCARTADA** y la
+posición anterior debe quedar intacta.
+
+### 8.3. Cuando llegue el módulo GPS
+
+1. Cablear (el GPS sólo necesita que le escuchemos, no le mandamos nada):
+
+   | GPS | ESP32 DevKit V1 |
+   |---|---|
+   | VCC | 3V3 |
+   | GND | GND |
+   | TX  | **GPIO16** (RX2) |
+   | RX  | *sin conectar* |
+
+2. Poner `GPS_UART_ENABLED` a `1` en `src/main.cpp` §5 (o compilar con
+   `-D GPS_UART_ENABLED=1`). El baudio por defecto es 9600, el de fábrica de
+   los NEO-6M/7M.
+3. `POS` debe empezar a dar posición al cabo de 1-2 minutos **con el módulo a
+   la vista del cielo**: en interiores un GPS no engancha.
+
+### 8.4. Posición dentro de los mensajes BLE — decisión pendiente
+
+El contrato BLE de la §1 está **congelado** con el equipo de la app: hoy sólo
+espera `ALERT:1`, `ALERT:2` y `CANCEL`. Mandarles la posición sin avisar les
+rompería el parser, así que la extensión está **implementada pero apagada**
+(`ALERT_WITH_POSITION`, `src/main.cpp` §6).
+
+Propuesta a acordar con ellos:
+
+```
+ALERT:1;<lat>;<lon>      lat/lon en grados decimales, 6 decimales, punto decimal
+ALERT:1                  igual que hoy cuando todavía no hay fix
+CANCEL                   nunca lleva posición
+```
+
+Es compatible hacia atrás si su parser corta por el primer `;`. Para activarla
+una vez acordado: `ALERT_WITH_POSITION` a `1` (o `-D ALERT_WITH_POSITION=1`).
+Ya está comprobado que compila.
+
+---
+
+## 9. Estructura del proyecto
 
 ```
 Expofisica/
-├── platformio.ini      # 2 entornos: devkit_v1 (hoy) y heltec_v3 (19-sep)
+├── platformio.ini           # entornos: devkit_v1 (el bueno), heltec_v3 (muerto), native (pruebas PC)
 ├── src/
-│   └── main.cpp         # firmware completo (FSM + BLE + LED)
-├── README.md            # este archivo
-├── PRUEBAS.md           # tabla de casos de prueba
+│   └── main.cpp             # firmware completo (FSM + BLE + LED + integración GPS)
+├── lib/
+│   └── nmea/                # módulo GPS: parseo NMEA, sin dependencias de Arduino
+│       ├── nmea.h
+│       └── nmea.cpp
+├── test/
+│   └── test_nmea/           # 16 pruebas automáticas del módulo GPS
+│       └── test_nmea.cpp
+├── README.md                # este archivo
+├── PRUEBAS.md               # tabla de casos de prueba
 └── .gitignore
 ```
 
 ---
 
-## 9. Solución de problemas
+## 10. Solución de problemas
 
 | Síntoma | Causa probable / arreglo |
 |---|---|
+| `Unable to verify flash chip connection (No serial data received.)` | `upload_speed` demasiado alto para el cable. Deja **115200** (ya está así en `platformio.ini`). |
+| `sh: gcc: orden no encontrada` al hacer `pio test -e native` | No hay compilador del sistema: `sudo dnf install gcc-c++`. Mientras tanto, `pio test -e devkit_v1` corre las mismas pruebas en la placa. |
+| `POS` dice siempre "sin posicion valida" | Con `GPS_UART_ENABLED=0` es lo normal: no hay GPS, alimenta la posición con `NMEA <trama>`. Con el módulo puesto, sácalo a la vista del cielo y espera 1-2 min. |
+| Una trama NMEA sale siempre "DESCARTADA" | Checksum mal copiado, o la línea se cortó: el buffer de comandos son 128 caracteres. Comprueba que copiaste la trama entera, `$` y `*HH` incluidos. |
 | `could not open port ... Permission denied` | Falta `dialout` (§3.1) y **cerrar sesión**. Verifica con `id`. |
 | `pio: command not found` | PATH: usa `pipx ensurepath && exec $SHELL`, o la ruta completa del venv (§3.3-C). |
 | No aparece ningún puerto en `pio device list` | Cable USB **sin datos** (solo carga), o falta el driver: mira `dmesg | tail`. Prueba otro cable/puerto. |
