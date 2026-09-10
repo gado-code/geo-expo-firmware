@@ -20,9 +20,39 @@ a 2 Hz e imprimiendo en serie.
 
 ---
 
-## 0. Punto de continuación — 9-sep-2026
+## 0. Punto de continuación — 10-sep-2026
 
-**Estado: etapa 1 verificada en la placa + módulo GPS escrito y probado.**
+**Estado: etapa 1 verificada en la placa, módulo GPS probado y la lógica del
+botón ahora cubierta por pruebas automáticas que corren en el PC.**
+
+### Sesión del 10-sep (sin placa delante)
+
+Toda esta sesión se hizo **sin el ESP32 a mano**, así que el trabajo fue
+revisar el firmware entero a fondo, arreglar lo que estaba mal y —sobre todo—
+dejar montada una red de seguridad que no dependa de tener la placa:
+
+- **La máquina de estados del botón se sacó a `lib/panic/`**, igual que se hizo
+  con el GPS. Ya no depende de Arduino: recibe `(tiempo, ¿pulsado?)` y devuelve
+  qué ha pasado. `src/main.cpp` sólo lee el pin y traduce el evento a NOTIFY,
+  LED y traza. **El comportamiento y los textos del log son los de siempre.**
+- **18 pruebas nuevas** (`test/test_panic/`) que simulan el botón milisegundo a
+  milisegundo: el umbral de los 3 s, rebotes al pulsar y al soltar, cancelar
+  desde pulsación corta y larga, la ventana que expira, arrancar con el botón
+  pulsado y hasta el desbordamiento de `millis()` a los 49,7 días. Con las 16
+  del GPS son **34 pruebas, todas pasando en el PC**:
+  ```bash
+  pio test -e native
+  ```
+- **Tres fallos corregidos** (detalle en `PRUEBAS.md`): **I11** el umbral de
+  los 3 s, **I13** una pulsación que se perdía después de un rebote, y **I14**
+  las alertas dejaban de salir por BLE si se desconectaba un segundo móvil.
+- Sigue **sin resolver la I12** (cuelgue en `NimBLEDevice::init()`). Lo que sí
+  se hizo fue acotarla: se localizó la línea exacta en la que se queda colgada
+  y se añadieron marcadores en el log para reconocerla al vuelo. Ver §10.
+
+> ⚠️ **Nada de esta sesión se ha probado en la placa.** Antes de dar por bueno
+> el firmware hay que flashear y repetir la §6, incluyendo los 10 reinicios
+> seguidos que pide la incidencia I12.
 
 ### Hecho hasta ahora
 
@@ -66,13 +96,10 @@ pruebas salió `sin cliente BLE: registrado solo en serie`.
 
 ### Notas de entorno
 
-- **No hay compilador de C/C++ en el sistema**, así que `pio test -e native`
-  (las pruebas en el PC) no puede correr todavía. Se arregla con:
-  ```bash
-  sudo dnf install gcc-c++
-  ```
-  Mientras tanto las mismas pruebas se ejecutan **en la placa**, que es igual
-  de válido: `pio test -e devkit_v1`.
+- **`pio test -e native` ya funciona** (el `gcc-c++` que faltaba está
+  instalado). Es la forma rápida de comprobar la lógica **sin placa y en
+  segundo y medio**. Las mismas pruebas corren también en la placa con
+  `pio test -e devkit_v1`.
 - `pio device monitor` **no funciona desde Claude Code**: necesita una TTY real
   y falla con `termios.error: Inappropriate ioctl for device`. Desde ahí hay
   que leer el puerto con un script de pyserial. En una terminal normal va bien.
@@ -111,6 +138,14 @@ pruebas salió `sin cliente BLE: registrado solo en serie`.
 ## 2. Máquina de estados del botón
 
 Estados: `IDLE → DEBOUNCE → PRESSED → CANCEL_WINDOW → IDLE`.
+
+> **Dónde está el código.** La lógica vive en **`lib/panic/`** y no depende de
+> Arduino (no llama a `millis()` ni a `digitalRead()`, no toca el LED y no
+> imprime nada): recibe `(tiempo, ¿pulsado?)` y devuelve qué ha pasado.
+> `src/main.cpp` §9 se limita a leer el pin y traducir el evento a NOTIFY, LED
+> y traza. Gracias a eso la FSM se prueba entera en el PC con
+> `pio test -e native`, que es la única forma de cubrir los bordes de
+> temporización sin estar pulsando el botón a ojo con un cronómetro.
 
 Parámetros (constantes al inicio de `src/main.cpp`, sin números mágicos):
 
@@ -534,16 +569,21 @@ Ya está comprobado que compila.
 
 ```
 Expofisica/
-├── platformio.ini           # entornos: devkit_v1 (el bueno), heltec_v3 (muerto), native (pruebas PC)
+├── platformio.ini           # entornos: devkit_v1 (el bueno), heltec_v3 (opcional), native (pruebas PC)
 ├── src/
-│   └── main.cpp             # firmware completo (FSM + BLE + LED + integración GPS)
-├── lib/
-│   └── nmea/                # módulo GPS: parseo NMEA, sin dependencias de Arduino
-│       ├── nmea.h
-│       └── nmea.cpp
+│   └── main.cpp             # firmware: pines, LED, BLE, comandos y pegamento
+├── lib/                     # lógica pura, SIN Arduino -> se prueba en el PC
+│   ├── nmea/                # módulo GPS: parseo de tramas NMEA
+│   │   ├── nmea.h
+│   │   └── nmea.cpp
+│   └── panic/               # máquina de estados del botón de pánico
+│       ├── panic.h
+│       └── panic.cpp
 ├── test/
-│   └── test_nmea/           # 16 pruebas automáticas del módulo GPS
-│       └── test_nmea.cpp
+│   ├── test_nmea/           # 16 pruebas del módulo GPS
+│   │   └── test_nmea.cpp
+│   └── test_panic/          # 18 pruebas de la FSM del botón
+│       └── test_panic.cpp
 ├── README.md                # este archivo
 ├── PRUEBAS.md               # tabla de casos de prueba
 └── .gitignore
@@ -556,7 +596,9 @@ Expofisica/
 | Síntoma | Causa probable / arreglo |
 |---|---|
 | `Unable to verify flash chip connection (No serial data received.)` | `upload_speed` demasiado alto para el cable. Deja **115200** (ya está así en `platformio.ini`). |
-| `sh: gcc: orden no encontrada` al hacer `pio test -e native` | No hay compilador del sistema: `sudo dnf install gcc-c++`. Mientras tanto, `pio test -e devkit_v1` corre las mismas pruebas en la placa. |
+| `sh: gcc: orden no encontrada` al hacer `pio test -e native` | Ya resuelto (hay `gcc-c++`). Si reaparece en otra máquina: `sudo dnf install gcc-c++`. |
+| **Al abrir el monitor salen solas transiciones de la FSM y hasta un `ALERT:2`** | El terminal activa **DTR**, que en esta placa está cableado a **GPIO0** — el mismo pin del botón. Ya está corregido con `monitor_dtr = 0` y `monitor_rts = 0` en `platformio.ini`. Si usas otro terminal (screen, Arduino IDE, minicom), **desactiva DTR/RTS ahí también** o volverá a pasar. |
+| **Bucle de reinicio: `rst:0x8 (TG1WDT_SYS_RESET)` justo tras el banner** | Incidencia **I12**, sin causa conocida. **Cómo confirmar que es ella:** en el log sale `BLE: entrando en NimBLEDevice::init() ...` y **nunca** llega el `init() completado` de la línea siguiente. Se queda dentro de la espera `while(!m_synced) taskYIELD();` del final de `NimBLEDevice::init()` (`NimBLEDevice.cpp:910`), esperando un `sync` del controlador BT que no llega. **Qué hacer:** vuelve al último binario que arrancaba (`git stash` de tus cambios + `pio run -t upload`) y comprueba con **10 reinicios seguidos** antes de dar nada por bueno. |
 | `POS` dice siempre "sin posicion valida" | Con `GPS_UART_ENABLED=0` es lo normal: no hay GPS, alimenta la posición con `NMEA <trama>`. Con el módulo puesto, sácalo a la vista del cielo y espera 1-2 min. |
 | Una trama NMEA sale siempre "DESCARTADA" | Checksum mal copiado, o la línea se cortó: el buffer de comandos son 128 caracteres. Comprueba que copiaste la trama entera, `$` y `*HH` incluidos. |
 | `could not open port ... Permission denied` | Falta `dialout` (§3.1) y **cerrar sesión**. Verifica con `id`. |

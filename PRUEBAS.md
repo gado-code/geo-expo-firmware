@@ -1,6 +1,11 @@
 # PRUEBAS · GEO-EXPO ALERT (firmware etapa 1)
 
-Placa: ESP32 DevKit V1 · Firmware: `src/main.cpp` · Fecha de la sesión de prueba: **9-sep-2026**
+Placa: ESP32 DevKit V1 · Firmware: `src/main.cpp` · Última sesión con la placa: **9-sep-2026** · Última revisión del código: **10-sep-2026**
+
+> ⚠️ **Los cambios del 10-sep NO están probados en la placa** (se trabajó sin
+> ella). Están cubiertos por las pruebas automáticas de la §0-bis, pero la
+> tabla de abajo sigue reflejando la sesión del 9-sep. Al volver a tener el
+> ESP32: flashear y repetir **0.4, 0.5, 1.1-1.10 y 3.x**.
 
 Marca cada casilla: **x** = pasado con registro · *?* = dado por bueno sin log · ☐ = sin probar.
 Monitor serie a **115200 bps**. App móvil: **nRF Connect for Mobile**.
@@ -19,6 +24,32 @@ Monitor serie a **115200 bps**. App móvil: **nRF Connect for Mobile**.
 
 ---
 
+## 0-bis. Pruebas automáticas (sin placa)
+
+Toda la lógica que no necesita hardware vive en `lib/` y se prueba en el PC.
+Es lo primero que hay que correr antes de flashear nada:
+
+```bash
+pio test -e native      # ~1,5 s, no hace falta la placa
+pio test -e devkit_v1   # las mismas pruebas, ejecutadas en el ESP32
+```
+
+| # | Suite | Qué cubre | Casos | OK |
+|---|---|---|:--:|:--:|
+| 0.6 | `test/test_nmea/` | Parseo NMEA: GGA, RMC, hemisferios con signo, checksum corrupto, trama sin fix, desbordamiento, flujo carácter a carácter | 16 | **x** |
+| 0.7 | `test/test_panic/` | FSM del botón: umbral de los 3 s, rebotes al pulsar y al soltar, cancelar desde corta y desde larga, ventana que expira, arranque con el botón pulsado, ciclos encadenados, desbordamiento de `millis()` | 18 | **x** |
+
+Resultado del 10-sep: **34 de 34 pasan**.
+
+Las pruebas de `test_panic` simulan el botón **milisegundo a milisegundo**, así
+que cubren cosas que a mano son casi imposibles de reproducir: soltar a 2999 ms
+exactos, un rebote de 1 ms, o lo que pasa a los 49,7 días cuando `millis()`
+vuelve a cero. Los casos 1.6, 1.7, 1.9 y 1.10 de la tabla de abajo tienen ahí
+su equivalente automático, así que una regresión sale a la luz sin tener que
+volver a pulsar el botón con un cronómetro.
+
+---
+
 ## 1. Máquina de estados del botón (LED + serie, sin BLE)
 
 | # | Caso | Procedimiento | Resultado esperado (serie) | Resultado esperado (LED) | OK | Observaciones |
@@ -28,10 +59,10 @@ Monitor serie a **115200 bps**. App móvil: **nRF Connect for Mobile**.
 | 1.3 | Pulsación prolongada | Mantener BOOT pulsado ≥ 3 s | A los **3 s exactos y sin soltar**: `>>> TX ALERT:2`, `PRESSED→CANCEL_WINDOW (ALERT:2 ...)` | 2 parpadeos, luego respiración | **x** | `ALERT:2` a los **3000 ms clavados** (PRESSED 481993 → TX 484993). |
 | 1.4 | Soltar tras pulsación larga | Soltar BOOT después de 1.3 | `CANCEL_WINDOW: botón liberado -> cancelación ARMADA` | Sigue la respiración | **x** | `cancelación ARMADA` a los 466 ms de soltar. |
 | 1.5 | Cancelar (desde corta) | Hacer 1.1 y, antes de 10 s, pulsar BOOT otra vez | `>>> TX CANCEL`, `CANCEL_WINDOW→IDLE (CANCEL ...)` | 3 parpadeos rápidos, luego apagado | **x** | **El fallo del re-disparo queda corregido**: tras el `CANCEL` (t=350176) no hay nada hasta la siguiente pulsación 86 s después. |
-| 1.6 | Cancelar (desde larga) | Hacer 1.3, soltar, y antes de 10 s pulsar BOOT | `>>> TX CANCEL`, vuelta a `IDLE` | 3 parpadeos rápidos, apagado | ☐ | Sin probar: el `CANCEL` registrado venía de una pulsación corta. |
-| 1.7 | Antirrebote flanco de bajada | Rozar BOOT con contacto muy breve (< 50 ms) | `DEBOUNCE→IDLE (rebote/ruido...)`, **sin** `ALERT` | Sin cambios visibles | ☐ | Sin probar en esta sesión. |
+| 1.6 | Cancelar (desde larga) | Hacer 1.3, soltar, y antes de 10 s pulsar BOOT | `>>> TX CANCEL`, vuelta a `IDLE` | 3 parpadeos rápidos, apagado | **x** | Verificado pulsando GPIO0 por software (DTR): `ALERT:2` → `cancelación ARMADA` al soltar → `CANCEL` a los 0,5 s. |
+| 1.7 | Antirrebote flanco de bajada | Rozar BOOT con contacto muy breve (< 50 ms) | `DEBOUNCE→IDLE (rebote/ruido...)`, **sin** `ALERT` | Sin cambios visibles | **x** | Pulso de 20 ms: `DEBOUNCE → IDLE (rebote/ruido)` y ninguna alerta. |
 | 1.8 | Antirrebote flanco de subida | Pulsación corta normal | **Un solo** `ALERT:1` (no varios por rebote al soltar) | 1 parpadeo largo | **x** | Un solo `ALERT:1` por pulsación en las 5 registradas. |
-| 1.9 | Umbral just-in-time | Soltar BOOT ~2,8 s (justo antes de 3 s) | Se emite `ALERT:1`, **no** `ALERT:2` | 1 parpadeo largo | ☐ | Sin probar. |
+| 1.9 | Umbral just-in-time | Soltar BOOT ~2,8 s (justo antes de 3 s) | Se emite `ALERT:1`, **no** `ALERT:2` | 1 parpadeo largo | **x** | **Destapó el fallo I11.** Barrido de 2900/2980/2960/3010/3060 ms: antes fallaba entre 2950 y 3000 ms; tras el arreglo el umbral cae limpio en 3000 ms. |
 | 1.10 | Reingreso tras confirmar | Tras 1.2, pulsar BOOT de nuevo | Nuevo ciclo `ALERT:1` normal | Igual que 1.1 | **x** | Tres ciclos completos encadenados sin residuos de estado. |
 
 ---
@@ -111,9 +142,15 @@ Lo que costó tiempo de verdad en la sesión del 9-sep. Casi nada fue el código
 | I4 | En nRF Connect la placa aparecía en el escaneo, pero al pulsar CONNECT **no pasaba absolutamente nada**: sin error, sin aviso, sin cambio en pantalla. | Android 12+ separa `BLUETOOTH_SCAN` y `BLUETOOTH_CONNECT`. Con sólo el de escanear, conectar falla **en silencio**. | ✅ Concediendo «Dispositivos cercanos» a la app. Se descartó antes que fuera del firmware conectando desde el PC con `bluetoothctl`. |
 | I5 | `Value: Notifications and indications disabled` y no llegaba nada al pulsar el botón. | El icono de notify es un **interruptor**: un toque de más las apaga. | ✅ Fiarse del texto (`Notifications enabled`), no del icono. |
 | I6 | Cuatro comandos pegados de golpe → `comando no reconocido`, con el texto cortado. | Llegaron **en una sola línea**, sin Enter entre ellos, y se truncaron a los 128 caracteres del buffer. | ✅ Un comando por línea. |
-| I7 | `pio test -e native` no arranca: `sh: gcc: orden no encontrada`. | No hay compilador de C/C++ en el sistema. | ⏳ Pendiente: `sudo dnf install gcc-c++`. Mientras tanto las pruebas corren en la placa. |
+| I7 | `pio test -e native` no arranca: `sh: gcc: orden no encontrada`. | No hay compilador de C/C++ en el sistema. | ✅ Resuelto: ya hay `gcc-c++`. `pio test -e native` pasa **16/16** casos de `lib/nmea`. |
 | I8 | La MAC que sale al flashear (`...31:D8`) no coincide con la que ve el móvil (`...31:DA`). | No es un fallo: el ESP32 usa la **MAC base +2** para BLE. | ✅ Documentado en `INTEGRACION-APP.md`. |
 | I9 | `pio device monitor` falla desde Claude Code con `termios.error: Inappropriate ioctl for device`. | Necesita una TTY real. | ✅ Se lee el puerto con un script de pyserial. En terminal normal funciona. |
+| I10 | **Al abrir el monitor la placa suelta sola una cascada de transiciones de la FSM y un `ALERT:2` fantasma** (pasó delante del técnico del laboratorio). | El circuito de auto-reset lleva **DTR → GPIO0** y **RTS → EN**. El terminal activa DTR al abrir el puerto y eso pone GPIO0 a BAJO: el firmware lo lee como el botón BOOT mantenido, y a los 3 s dispara `ALERT:2`. Comprobado con las 4 combinaciones DTR/RTS: sólo falla DTR=1, RTS=0. | ✅ `monitor_dtr = 0` y `monitor_rts = 0` en `platformio.ini`. Verificado: el arranque sale limpio y no aparece ninguna transición sola. |
+| I11 | Soltar el botón **entre 2,95 s y 3,00 s** emitía `ALERT:2` (emergencia grave) en vez de `ALERT:1`. | La rama de pulsación larga de `fsmUpdate()` no comprobaba si el botón seguía pulsado, así que se adelantaba al antirrebote del flanco de subida, que tarda `DEBOUNCE_MS` en confirmar el soltado. | ✅ Corregido: la rama exige `raw == LOW`. Verificado con pulsaciones por software de 2900/3010/3030/3060 ms. |
+| I13 | **Una pulsación normal se PERDÍA si venía justo después de un rebote**: el botón parecía muerto hasta soltarlo del todo y volver a pulsar. | Al volver de `DEBOUNCE` a `IDLE` por rebote, el nivel previo se quedaba en «pulsado» (lo había dejado así la detección del flanco). Cuando el contacto se asentaba de verdad ya no había transición suelto→pulsado que detectar. Nunca salió en las pruebas a mano porque el caso 1.7 se probó con un pulso limpio de 20 ms, sin lo que viene detrás. | ✅ Corregido: ahora se resincroniza el nivel **siempre** que se entra en `IDLE` (`lib/panic/panic.cpp`, `enterIdle`). Cubierto por `test_i13_pulsacion_tras_rebote_no_se_pierde`, que **falla** si se quita el arreglo. |
+| I14 | **Las alertas dejaban de salir por BLE si un segundo móvil se desconectaba**, aunque el primero siguiera conectado. El log decía «sin cliente BLE». | `g_bleConnected` era un `bool` que **cualquier** `onDisconnect` ponía a `false`, y NimBLE admite hasta 3 clientes a la vez. En un botón de pánico es el fallo más grave posible: la alerta se registra en el serie y nadie la recibe. | ✅ Corregido: se le pregunta al servidor con `getConnectedCount()` en vez de llevar un booleano propio (`src/main.cpp` §6). |
+| I15 | Dos comandos BLE seguidos y rápidos: el primero se perdía sin dejar rastro. | La cola RX tenía **un solo hueco**; el segundo `WRITE` pisaba al primero antes de que `loop()` lo leyera. | ✅ Corregido: anillo de 4 huecos y aviso explícito en el log si aun así se llena. |
+| I12 | **SIN RESOLVER.** Ciertos binarios se quedan colgados dentro de `NimBLEDevice::init()` y la placa entra en bucle de reinicio (`rst:0x8 TG1WDT_SYS_RESET`), **sin ningún mensaje de panic**. | Desconocida. Es determinista por binario y depende del *layout* del código: el mismo fuente con una línea de más arranca. Descartados: NVS corrupta (falla igual tras `pio run -t erase`), desbordamiento de pila de `loopTask` (sólo usa 1952 B de 8192) y la versión de NimBLE (sin cambios desde el 8-sep). **Acotado el 10-sep:** el punto exacto es la espera `while(!m_synced) taskYIELD();` del final de `NimBLEDevice::init()` (`NimBLEDevice.cpp:910`), que gira esperando un `sync` del controlador BT que nunca llega. Se descartó también que el compilador estuviera sacando la lectura de `m_synced` fuera del bucle: `taskYIELD()` es una llamada real a `vPortYield()`, así que la variable se relee en cada vuelta. | ⚠️ Mitigado, no resuelto. Añadidos dos marcadores en el log (`entrando en NimBLEDevice::init()` / `init() completado`) para reconocerla de un vistazo. **Ojo:** los cambios del 10-sep mueven el *layout*, así que hay que volver a comprobar **10 arranques seguidos** al flashear. |
 
 > Recordatorio: sólo un proceso puede tener abierto `/dev/ttyUSB0`. Si dos lo
 > leen a la vez se reparten los bytes y ninguno ve la salida entera.
@@ -123,9 +160,13 @@ Lo que costó tiempo de verdad en la sesión del 9-sep. Casi nada fue el código
 
 ## Qué falta por probar
 
-- **1.6** cancelar desde una pulsación **larga** (el `CANCEL` registrado vino de una corta).
-- **1.7** antirrebote del flanco de bajada (roce muy breve del botón).
-- **1.9** soltar a ~2,8 s: debe salir `ALERT:1`, **no** `ALERT:2`.
-- **2.2** prioridad de la baliza sobre el patrón de alerta.
+- **Reflashear y revalidar todo lo del 10-sep** (§0-bis dice qué está cubierto
+  por pruebas automáticas y qué no). En especial **10 arranques seguidos** por
+  la incidencia I12.
+- **2.2** prioridad de la baliza sobre el patrón de alerta (hay que **mirar el LED**, no se puede
+  comprobar desde el log).
+- **I14** en la placa: conectar **dos** móviles, desconectar uno y comprobar que
+  el que queda sigue recibiendo `ALERT:1`.
+- **I12**: encontrar la causa real del cuelgue en `NimBLEDevice::init()`.
 - **3.6 / 3.7** recibir `ALERT:2` y `CANCEL` **por BLE** (por serie ya están).
 - **3.8 / 3.9** `BEACON:ON` / `BEACON:OFF` desde el móvil, dejándolo en el log.

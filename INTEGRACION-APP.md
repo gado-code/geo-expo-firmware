@@ -130,8 +130,10 @@ en segundo plano y reconectar en cuanto pueda.
 **Reconexión.** Al desconectarse un cliente, el dispositivo reanuda el anuncio
 solo, de inmediato. No hace falta resetear nada.
 
-**Un cliente a la vez.** El firmware está pensado para una sola app conectada.
-No intentéis dos.
+**Un cliente a la vez.** El firmware está pensado para una sola app conectada;
+seguid contando con eso. (Aviso interno: hasta el 10-sep, si llegaba a haber
+dos y una se desconectaba, el firmware dejaba de notificar también a la otra.
+Ya está corregido, pero el diseño sigue siendo de un cliente.)
 
 **Un mensaje por notificación, pero no lo deis por hecho.** Hoy cada notificación
 lleva un mensaje entero. Aun así, **acumulad en un buffer y partid por `\n`** en

@@ -2,8 +2,9 @@
  *  GEO-EXPO ALERT  ·  Firmware etapa 1  (solo periféricos integrados)
  * ============================================================================
  *  Placa : ESP32 DevKit V1  (ESP32-WROOM-32, Xtensa LX6, BT clásico)
- *          La migración a la Heltec V3 quedó CANCELADA; los bloques
- *          BOARD_HELTEC_V3 se conservan pero no se usan (README §7).
+ *          La Heltec V3 es OPCIONAL y no tiene fecha: la prioridad es
+ *          terminar el llavero sobre la DevKit V1. Los bloques
+ *          BOARD_HELTEC_V3 se conservan pero NO se compilan ni se prueban.
  *
  *  Esta etapa NO usa hardware externo (no hay protoboard, buzzer ni pulsadores):
  *      · Botón : BOOT en GPIO0  (activo en BAJO, con pull-up interno)
@@ -45,14 +46,15 @@
 #include <string.h>
 #include <NimBLEDevice.h>
 
-#include "nmea.h"          // lib/nmea: parseo de tramas GPS (probado en test/)
+#include "nmea.h"           // lib/nmea:  parseo de tramas GPS   (probado en test/)
+#include "panic.h"          // lib/panic: FSM del boton de panico (probada en test/)
 
 /* ==========================================================================
  *  1. CONFIGURACIÓN DE PINES
  * --------------------------------------------------------------------------
  *  Se selecciona con -D BOARD_HELTEC_V3 desde platformio.ini.
- *  La tabla documenta el valor equivalente para la Heltec V3 (migración
- *  en 2 semanas):
+ *  La tabla deja anotado el pin equivalente en la Heltec V3 por si algún día
+ *  se hace el salto; hoy NO es el camino del proyecto (ver cabecera):
  *
  *     Función         | DevKit V1 (WROOM-32) | Heltec WiFi LoRa 32 V3 (S3)
  *     ----------------|----------------------|---------------------------
@@ -93,9 +95,9 @@ static const char* DEVICE_NAME  = "GEOEXPO-ALERT";
  *  Prioridad de visualización:
  *     baliza 2 Hz  >  patrón puntual (ALERT/CANCEL)  >  respiración  >  apagado
  *
- *  Se usa analogWrite(): funciona IGUAL en ESP32 y ESP32-S3, no hay que
- *  tocar nada en la migración (a diferencia de ledcSetup/ledcAttachPin,
- *  que cambian de firma entre arduino-esp32 2.x y 3.x).
+ *  Se usa analogWrite(): funciona IGUAL en ESP32 y ESP32-S3 (a diferencia de
+ *  ledcSetup/ledcAttachPin, que cambian de firma entre arduino-esp32 2.x
+ *  y 3.x), así que este bloque no habría que tocarlo en un cambio de placa.
  * ==========================================================================*/
 namespace led {
 
@@ -280,15 +282,35 @@ namespace gps {
  * caracteres y el prefijo "NMEA " suma 5 más, así que 128 va sobrado. */
 static const size_t CMD_BUF_SIZE = 128;
 
-static NimBLECharacteristic* g_txChar = nullptr;
-static volatile bool         g_bleConnected = false;
+static NimBLEServer*         g_server  = nullptr;
+static NimBLECharacteristic* g_txChar  = nullptr;
 static bool                  g_beaconActive = false;   // estado lógico de la baliza
 
-// Cola mínima RX: los WRITE del cliente se copian aquí y se procesan en
-// loop(); NUNCA se hace trabajo pesado dentro del callback de NimBLE.
-static volatile bool  g_rxPending = false;
-static char           g_rxBuf[CMD_BUF_SIZE];
-static portMUX_TYPE   g_rxMux = portMUX_INITIALIZER_UNLOCKED;
+/* ¿Hay alguien escuchando?
+ *
+ * Antes esto era un simple `bool g_bleConnected` que ponía a false CUALQUIER
+ * desconexión. Con NimBLE admitiendo hasta 3 clientes a la vez, bastaba que
+ * un segundo móvil se desconectara para que el firmware creyera que ya no
+ * había nadie y DEJARA DE MANDAR LAS ALERTAS por BLE al móvil que seguía
+ * conectado. En un botón de pánico eso es el fallo más grave posible, así que
+ * ahora se le pregunta al propio servidor cuántos clientes hay. */
+static bool bleHasClient() {
+  return g_server != nullptr && g_server->getConnectedCount() > 0;
+}
+
+/* Cola RX: los WRITE del cliente se copian aquí y se procesan en loop();
+ * NUNCA se hace trabajo pesado dentro del callback de NimBLE.
+ *
+ * Es un anillo de 4 huecos, no un único buffer. Con un solo hueco, dos WRITE
+ * seguidos (la app mandando "BEACON:OFF" justo después de "BEACON:ON", o el
+ * usuario pegando comandos) hacían que el segundo pisara al primero y el
+ * primero se PERDÍA sin dejar rastro. */
+static const uint8_t    RX_QUEUE_LEN = 4;
+static char             g_rxQueue[RX_QUEUE_LEN][CMD_BUF_SIZE];
+static volatile uint8_t g_rxHead = 0;      // donde escribe el callback BLE
+static volatile uint8_t g_rxTail = 0;      // donde lee loop()
+static volatile uint16_t g_rxDropped = 0;  // comandos perdidos por cola llena
+static portMUX_TYPE     g_rxMux = portMUX_INITIALIZER_UNLOCKED;
 
 /* ---- Trazas -------------------------------------------------------------- */
 static void trace(const char* msg) {
@@ -331,11 +353,12 @@ static void emitTx(const char* token) {
   }
 #endif
 
+  const bool hayCliente = bleHasClient();
   Serial.printf("[t=%8lu ms] >>> TX  %-24s  %s\n",
                 (unsigned long)millis(), msg,
-                g_bleConnected ? "(enviado por BLE)"
-                               : "(sin cliente BLE: registrado solo en serie)");
-  if (g_txChar && g_bleConnected) {
+                hayCliente ? "(enviado por BLE)"
+                           : "(sin cliente BLE: registrado solo en serie)");
+  if (g_txChar && hayCliente) {
     char buf[72];
     int n = snprintf(buf, sizeof(buf), "%s\n", msg);     // contrato: termina en '\n'
     g_txChar->setValue(reinterpret_cast<uint8_t*>(buf), n);
@@ -345,13 +368,15 @@ static void emitTx(const char* token) {
 
 /* ---- Callbacks del servidor BLE ---------------------------------------- */
 class ServerCB : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* /*server*/) override {
-    g_bleConnected = true;
-    trace("BLE: cliente CONECTADO");
+  void onConnect(NimBLEServer* server) override {
+    Serial.printf("[t=%8lu ms] BLE: cliente CONECTADO (%u en total)\n",
+                  (unsigned long)millis(), (unsigned)server->getConnectedCount());
   }
-  void onDisconnect(NimBLEServer* /*server*/) override {
-    g_bleConnected = false;
-    trace("BLE: cliente DESCONECTADO -> se reanuda el advertising");
+  void onDisconnect(NimBLEServer* server) override {
+    // El advertising se reanuda SIEMPRE: NimBLE lo para al aceptar una
+    // conexión, y si no se relanza el llavero queda invisible para el resto.
+    Serial.printf("[t=%8lu ms] BLE: cliente DESCONECTADO (quedan %u) -> se reanuda el advertising\n",
+                  (unsigned long)millis(), (unsigned)server->getConnectedCount());
     NimBLEDevice::startAdvertising();
   }
 };
@@ -359,14 +384,20 @@ class ServerCB : public NimBLEServerCallbacks {
 /* ---- Callback de la característica RX (app -> ESP32) -------------------- */
 class RxCB : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* c) override {
-    NimBLEAttValue v = c->getValue();
-    const char*  s   = v.c_str();
-    size_t       len = v.length();
+    NimBLEAttValue v   = c->getValue();
+    const char*    s   = v.c_str();
+    size_t         len = v.length();
+    const size_t   n   = (len < CMD_BUF_SIZE - 1) ? len : CMD_BUF_SIZE - 1;
+
     portENTER_CRITICAL(&g_rxMux);
-    size_t n = (len < sizeof(g_rxBuf) - 1) ? len : sizeof(g_rxBuf) - 1;
-    memcpy(g_rxBuf, s, n);
-    g_rxBuf[n] = '\0';
-    g_rxPending = true;
+    const uint8_t next = (uint8_t)((g_rxHead + 1) % RX_QUEUE_LEN);
+    if (next == g_rxTail) {
+      ++g_rxDropped;                  // cola llena: se avisa desde loop()
+    } else {
+      memcpy(g_rxQueue[g_rxHead], s, n);
+      g_rxQueue[g_rxHead][n] = '\0';
+      g_rxHead = next;
+    }
     portEXIT_CRITICAL(&g_rxMux);
   }
 };
@@ -375,13 +406,19 @@ class RxCB : public NimBLECharacteristicCallbacks {
  *  7. INICIALIZACIÓN BLE
  * ==========================================================================*/
 static void bleBegin() {
+  // Marcadores a ambos lados de init(): si la placa vuelve a entrar en bucle
+  // de reinicio (incidencia I12) el log dice sin ambigüedad si se colgó
+  // DENTRO de NimBLEDevice::init() o después. Ver README.
+  trace("BLE: entrando en NimBLEDevice::init() ...");
   NimBLEDevice::init(DEVICE_NAME);
+  trace("BLE: NimBLEDevice::init() completado (host y controlador sincronizados)");
+
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);          // +9 dBm: alcance de demostración
 
-  NimBLEServer* server = NimBLEDevice::createServer();
-  server->setCallbacks(new ServerCB());
+  g_server = NimBLEDevice::createServer();
+  g_server->setCallbacks(new ServerCB());
 
-  NimBLEService* svc = server->createService(NUS_SERVICE_UUID);
+  NimBLEService* svc = g_server->createService(NUS_SERVICE_UUID);
 
   g_txChar = svc->createCharacteristic(NUS_TX_CHAR_UUID, NIMBLE_PROPERTY::NOTIFY);
 
@@ -443,17 +480,34 @@ static void handleCommand(const char* rawCmd) {
   }
 }
 
-/* ---- Vaciar la cola RX de BLE (se llama desde loop()) ----------------- */
+/* ---- Vaciar la cola RX de BLE (se llama desde loop()) -----------------
+ * Se procesan TODOS los comandos que haya pendientes, no sólo el último. */
 static void blePollRx() {
-  if (!g_rxPending) return;
-  char local[CMD_BUF_SIZE];
-  portENTER_CRITICAL(&g_rxMux);
-  strncpy(local, g_rxBuf, sizeof(local));
-  local[sizeof(local) - 1] = '\0';
-  g_rxPending = false;
-  portEXIT_CRITICAL(&g_rxMux);
-  Serial.printf("[t=%8lu ms] <<< RX (BLE) \"%s\"\n", (unsigned long)millis(), local);
-  handleCommand(local);
+  for (;;) {
+    char     local[CMD_BUF_SIZE];
+    uint16_t perdidos = 0;
+    bool     hay      = false;
+
+    portENTER_CRITICAL(&g_rxMux);
+    if (g_rxTail != g_rxHead) {
+      memcpy(local, g_rxQueue[g_rxTail], sizeof(local));
+      g_rxTail = (uint8_t)((g_rxTail + 1) % RX_QUEUE_LEN);
+      hay = true;
+    }
+    perdidos    = g_rxDropped;
+    g_rxDropped = 0;
+    portEXIT_CRITICAL(&g_rxMux);
+
+    if (perdidos) {
+      Serial.printf("[t=%8lu ms] <<< RX (BLE) AVISO: %u comando(s) perdidos, cola llena\n",
+                    (unsigned long)millis(), (unsigned)perdidos);
+    }
+    if (!hay) return;
+
+    local[sizeof(local) - 1] = '\0';
+    Serial.printf("[t=%8lu ms] <<< RX (BLE) \"%s\"\n", (unsigned long)millis(), local);
+    handleCommand(local);
+  }
 }
 
 /* ---- Comandos por el monitor serie (para probar SIN celular) ---------- */
@@ -479,135 +533,57 @@ static void serialPoll() {
 /* ==========================================================================
  *  9. MÁQUINA DE ESTADOS DEL BOTÓN
  * --------------------------------------------------------------------------
- *  Estados: IDLE -> DEBOUNCE -> PRESSED -> CANCEL_WINDOW -> IDLE
+ *  La lógica vive en lib/panic y NO depende de Arduino, así que se prueba
+ *  entera en el PC con `pio test -e native` (34 casos, sin placa). Aquí sólo
+ *  quedan las tres cosas que sí necesitan hardware:
  *
- *  · Pulsación corta  : soltar antes de 3 s -> "ALERT:1" + ventana de cancelación
- *  · Pulsación larga  : mantener 3 s        -> "ALERT:2" EN EL INSTANTE de los
- *                       3 s (sin esperar a soltar) + ventana de cancelación
- *  · Ventana (10 s)   : cualquier pulsación nueva -> "CANCEL" y vuelta a IDLE
- *  · Tras un CANCEL   : no se arma otra pulsación hasta soltar el botón
- *  · Ventana expira   : vuelta a IDLE (la alerta queda CONFIRMADA)
- *  · Antirrebote de 50 ms aplicado al flanco de bajada Y al de subida.
+ *      leer el pin  ->  pasarle el nivel a la FSM  ->  NOTIFY + LED + traza
+ *
+ *  El comportamiento y los textos del log son los mismos de siempre; lo que
+ *  cambia es que ahora los bordes de temporización están cubiertos por
+ *  pruebas en vez de por pulsaciones a ojo.
  * ==========================================================================*/
-enum ButtonState { ST_IDLE, ST_DEBOUNCE, ST_PRESSED, ST_CANCEL_WINDOW };
-
-static ButtonState g_st            = ST_IDLE;
-static uint32_t    g_tDebounce     = 0;    // entrada a DEBOUNCE
-static uint32_t    g_tPressed      = 0;    // pulsación confirmada (para contar los 3 s)
-static uint32_t    g_tCancelStart  = 0;    // inicio de la ventana de cancelación
-static uint32_t    g_tRawChange    = 0;    // último cambio del nivel crudo (antirrebote de subida)
-static int         g_lastRaw       = HIGH;
-static int         g_idlePrevRaw   = HIGH;  // nivel previo en IDLE (para exigir flanco real)
-static bool        g_longFired     = false;
-static bool        g_cancelArmed   = false;
-
-static const char* stName(ButtonState s) {
-  switch (s) {
-    case ST_IDLE:          return "IDLE";
-    case ST_DEBOUNCE:      return "DEBOUNCE";
-    case ST_PRESSED:       return "PRESSED";
-    case ST_CANCEL_WINDOW: return "CANCEL_WINDOW";
-  }
-  return "?";
-}
-
-static void go(ButtonState next, const char* motivo) {
-  Serial.printf("[t=%8lu ms] FSM  %-13s -> %-13s  (%s)\n",
-                (unsigned long)millis(), stName(g_st), stName(next), motivo);
-  g_st = next;
-}
+static panic::Fsm g_fsm(panic::Config{DEBOUNCE_MS, LONG_PRESS_MS, CANCEL_WINDOW_MS});
 
 static void fsmUpdate(uint32_t now) {
-  int raw = digitalRead(PIN_BUTTON);      // LOW = pulsado (pull-up interno)
+  const bool pressed = (digitalRead(PIN_BUTTON) == LOW);   // pull-up: LOW = pulsado
+  const panic::Step s = g_fsm.update(now, pressed);
 
-  switch (g_st) {
+  // (a) Lo que viaja por el contrato BLE: ALERT:1 / ALERT:2 / CANCEL.
+  const char* token = panic::Fsm::txToken(s.event);
+  if (token) emitTx(token);
 
-    /* ---------------------------------------------------------------- */
-    case ST_IDLE: {
-      // Se exige un flanco real HIGH->LOW. Si se entra a IDLE con el botón
-      // aún pulsado (tras un CANCEL, o si la placa arranca con BOOT pulsado)
-      // hay que esperar a que se suelte antes de armar una pulsación nueva.
-      const bool flancoBajada = (raw == LOW && g_idlePrevRaw == HIGH);
-      g_idlePrevRaw = raw;
-      if (flancoBajada) {
-        g_tDebounce = now;
-        go(ST_DEBOUNCE, "flanco de bajada detectado");
-      }
+  // (b) Realimentación visual y trazas propias de cada evento.
+  switch (s.event) {
+    case panic::Event::ALERT_SHORT:
+      led::blink(1, 800, 0);              // un parpadeo largo
+      led::setBreathing(true);
       break;
-    }
-
-    /* ---------------------------------------------------------------- */
-    case ST_DEBOUNCE:
-      if (raw == HIGH) {
-        go(ST_IDLE, "rebote/ruido: se soltó antes de DEBOUNCE_MS");
-      } else if (now - g_tDebounce >= DEBOUNCE_MS) {
-        g_tPressed   = now;
-        g_longFired  = false;
-        g_lastRaw    = LOW;
-        g_tRawChange = now;
-        go(ST_PRESSED, "pulsación confirmada tras 50 ms");
-      }
+    case panic::Event::ALERT_LONG:
+      led::blink(2, 250, 200);            // dos parpadeos
+      led::setBreathing(true);
       break;
-
-    /* ---------------------------------------------------------------- */
-    case ST_PRESSED: {
-      // (a) Pulsación prolongada: emitir EN EL INSTANTE de los 3 s.
-      if (!g_longFired && (now - g_tPressed >= LONG_PRESS_MS)) {
-        g_longFired    = true;
-        emitTx("ALERT:2");
-        led::blink(2, 250, 200);          // dos parpadeos
-        g_tCancelStart = now;
-        g_cancelArmed  = false;           // hay que esperar a que suelte el botón
-        g_lastRaw      = raw;
-        g_tRawChange   = now;
-        led::setBreathing(true);
-        go(ST_CANCEL_WINDOW, "ALERT:2 : mantenido >= 3 s");
-        break;
-      }
-      // (b) Antirrebote del flanco de subida (soltar el botón).
-      if (raw != g_lastRaw) { g_lastRaw = raw; g_tRawChange = now; }
-      if (raw == HIGH && (now - g_tRawChange >= DEBOUNCE_MS)) {
-        // Se soltó antes de los 3 s -> pulsación corta.
-        emitTx("ALERT:1");
-        led::blink(1, 800, 0);            // un parpadeo largo
-        g_tCancelStart = now;
-        g_cancelArmed  = true;            // el botón ya está liberado
-        g_lastRaw      = HIGH;
-        g_tRawChange   = now;
-        led::setBreathing(true);
-        go(ST_CANCEL_WINDOW, "ALERT:1 : pulsación corta");
-      }
+    case panic::Event::CANCEL:
+      led::blink(3, 90, 90);              // tres parpadeos rápidos
+      led::setBreathing(false);
       break;
-    }
-
-    /* ---------------------------------------------------------------- */
-    case ST_CANCEL_WINDOW: {
-      // Antirrebote común a ambos flancos dentro de la ventana.
-      if (raw != g_lastRaw) { g_lastRaw = raw; g_tRawChange = now; }
-      bool stable = (now - g_tRawChange >= DEBOUNCE_MS);
-
-      if (!g_cancelArmed) {
-        // Venimos de una pulsación prolongada con el botón aún pulsado:
-        // se arma la cancelación cuando el botón se suelta de forma estable.
-        if (raw == HIGH && stable) {
-          g_cancelArmed = true;
-          trace("CANCEL_WINDOW: botón liberado -> cancelación ARMADA");
-        }
-      } else if (raw == LOW && stable) {
-        // Nueva pulsación dentro de la ventana -> CANCELAR.
-        emitTx("CANCEL");
-        led::blink(3, 90, 90);            // tres parpadeos rápidos
-        led::setBreathing(false);
-        go(ST_IDLE, "CANCEL dentro de la ventana");
-        break;
-      }
-
-      if (now - g_tCancelStart >= CANCEL_WINDOW_MS) {
-        led::setBreathing(false);
-        go(ST_IDLE, "ventana expirada: alerta CONFIRMADA");
-      }
+    case panic::Event::CANCEL_ARMED:
+      trace("CANCEL_WINDOW: botón liberado -> cancelación ARMADA");
       break;
-    }
+    case panic::Event::WINDOW_EXPIRED:
+      led::setBreathing(false);
+      break;
+    default:
+      break;                              // NONE y BOUNCE no pintan nada
+  }
+
+  // (c) Traza de la transición, en el mismo formato de siempre.
+  if (s.changed) {
+    Serial.printf("[t=%8lu ms] FSM  %-13s -> %-13s  (%s)\n",
+                  (unsigned long)now,
+                  panic::Fsm::stateName(s.from),
+                  panic::Fsm::stateName(s.to),
+                  s.reason);
   }
 }
 
@@ -660,7 +636,9 @@ void setup() {
   while (!Serial && (millis() - t0) < 2000) { /* espera opcional al USB-CDC (S3) */ }
 
   pinMode(PIN_BUTTON, INPUT_PULLUP);
-  g_idlePrevRaw = digitalRead(PIN_BUTTON);   // arrancar con BOOT pulsado no cuenta como flanco
+  // Arrancar con BOOT pulsado (o con el DTR del monitor tirando de GPIO0) no
+  // cuenta como flanco: la FSM exige soltarlo antes de armar una pulsación.
+  g_fsm.begin(digitalRead(PIN_BUTTON) == LOW, millis());
   led::begin();
 
   printBanner();
