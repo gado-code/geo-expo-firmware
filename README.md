@@ -531,17 +531,25 @@ monitor + comportamiento del LED) y lo depuramos.
 
 ---
 
-## 7. Migración a Heltec WiFi LoRa 32 V3 (ESP32-S3) — ❌ CANCELADA
+## 7. Heltec WiFi LoRa 32 V3 y la red LoRa — ✅ RETOMADA (19-sep)
 
-> **Esta migración NO se va a hacer.** El pedido de la Heltec se canceló el
-> 8-sep, así que **todo el proyecto se queda en la ESP32 DevKit V1** y no hay
-> LoRa en ninguna etapa.
+> **El plan volvió a cambiar el 19-sep**: el objetivo ahora es una red LoRa
+> **punto a punto entre dos Heltec WiFi LoRa 32 V3** y, si sale bien, una red de
+> más puntos.
 >
-> El entorno `heltec_v3` de `platformio.ini` y los `#if defined(BOARD_HELTEC_V3)`
-> de `src/main.cpp` se conservan porque siguen compilando y no estorban, pero
-> son **material muerto**: no los tomes como trabajo pendiente. El resto de
-> esta sección queda sólo como referencia, por si algún día se retoma otra
-> placa.
+> **Ese trabajo NO vive aquí, sino en el subproyecto [`lora/`](lora/)**, con su
+> propio `platformio.ini`, su librería probada en el PC (197 pruebas) y su
+> documentación ([`lora/DISENO.md`](lora/DISENO.md) y
+> [`lora/README.md`](lora/README.md)). Se separó a propósito: el binario del
+> llavero arrastra la incidencia I12, que depende del *layout*, y así nada de
+> lo que se compile para la Heltec puede reabrirla.
+>
+> **El llavero sigue siendo una DevKit V1 con BLE.** Lo de abajo es lo que
+> haría falta si algún día se quisiera portar ESTE firmware (el del botón de
+> pánico) a la Heltec; no es trabajo pendiente. El entorno `heltec_v3` de
+> `platformio.ini` y los `#if defined(BOARD_HELTEC_V3)` de `src/main.cpp` se
+> conservan porque siguen compilando y sirven para comprobar que el código no
+> se ata a una placa.
 
 Entorno preparado (sin uso): `pio run -e heltec_v3`.
 
