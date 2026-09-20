@@ -20,7 +20,50 @@ a 2 Hz e imprimiendo en serie.
 
 ---
 
-## 0. Punto de continuación — 10-sep-2026
+## 0. Punto de continuación — 19-sep-2026
+
+**Estado: etapa 1 verificada en hardware (incluidos los 10 arranques de la
+I12), y el llavero ya está preparado para el pulsador externo y el buzzer que
+están por llegar.**
+
+### Sesión del 18/19-sep (placa delante, en un PC con Windows)
+
+- **Se revalidó en la placa todo lo del 10-sep**: §1 y §2 completas, con los
+  tiempos medidos al milisegundo. Resultados en
+  [`PRUEBAS.md` §0-ter](PRUEBAS.md). Lo más importante: **10 de 10 arranques
+  limpios** (incidencia I12) y la **I13 confirmada en hardware**.
+- **Entorno nuevo**: en Windows el puerto es **`COM3`** y hay que instalar a
+  mano el driver CP210x de Silicon Labs (Windows lo deja en «código 28»). Los
+  cables micro-USB de repuesto eran de **solo carga** otra vez (I1).
+- **Arnés de pruebas nuevo en `tools/`**: `hw.py` lee el puerto sin necesitar
+  una TTY real (rodea la I9), **pulsa BOOT por software** con DTR y resetea con
+  RTS; `ble_test.py` automatiza la §3 entera con `bleak` desde cualquier equipo
+  **que tenga Bluetooth** (el PC de sobremesa no lo tiene, así que la §3 sigue
+  haciéndose con el móvil).
+- **Pulsador externo soportado y activo por defecto** en `GPIO4`, en paralelo
+  con BOOT. Buzzer piezo implementado y **apagado** por defecto. Ver la §2-bis.
+- **Tres arreglos**, todos salidos de la revisión del código:
+  1. **I16**: el advertising **no se reanudaba al conectar**, así que con un
+     móvil conectado el llavero quedaba invisible: no cabía un segundo cliente
+     y un móvil ajeno podía dejar fuera al del dueño.
+  2. El log decía `(enviado por BLE)` aunque el cliente **no estuviera
+     suscrito** a TX y el NOTIFY se tirara en silencio (el caso de la I5).
+     Ahora distingue los tres estados.
+  3. El comando `NMEA` pasaba la trama a **mayúsculas**, y como el checksum es
+     el XOR de los bytes, cualquier trama con minúsculas se descartaba.
+- **Pendiente**: reflashear y hacer la §3-ter de `PRUEBAS.md`, en especial los
+  10 arranques, porque el binario cambió (RAM 11,2 %, Flash 46,0 %).
+
+### Decisiones tomadas que cambian el plan
+
+- **La Heltec vuelve al plan**: el objetivo ahora es una red **punto a punto
+  entre dos Heltec WiFi LoRa 32 V3** y, si sale, una red de más puntos. El
+  trabajo vive en el subproyecto **[`lora/`](lora/)**, aparte de este firmware
+  para no tocar el binario del llavero. Ver la §7.
+
+---
+
+## 0-bis. Punto de continuación anterior — 10-sep-2026
 
 **Estado: etapa 1 verificada en la placa, módulo GPS probado y la lógica del
 botón ahora cubierta por pruebas automáticas que corren en el PC.**
@@ -86,11 +129,17 @@ pruebas salió `sin cliente BLE: registrado solo en serie`.
    **desactivado** (`ALERT_WITH_POSITION`, `src/main.cpp` §6), porque el
    contrato de la §1 está congelado con el equipo de la app. La propuesta a
    acordar con ellos es `ALERT:1;<lat>;<lon>`. Detalle en la §8.3.
-2. **Botón definitivo.** El pin es la constante `PIN_BUTTON` (`src/main.cpp`
-   §1), así que sólo hay que cambiar el número. Pero **no uses GPIO0, 2, 12 ni
-   15**: son *strapping pins* y pueden impedir el arranque. Libres y seguros:
-   GPIO4, 5, 18, 19, 21. El código asume `INPUT_PULLUP` con el botón a masa
-   (LOW = pulsado); si se cablea al revés hay que invertir la lógica.
+2. **Botón definitivo.** ✅ **Resuelto el 19-sep**: ya no hay que cambiar
+   `PIN_BUTTON`, el pulsador externo se configura con `-D EXT_BUTTON_PIN`
+   (GPIO4 por defecto) y conviven los dos botones. Ver la §2-bis.
+   > ⚠️ **Corrección de lo que decía aquí antes.** La lista vieja de pines
+   > «libres y seguros» tenía dos errores: **GPIO5 SÍ es strapping** (define el
+   > timing de arranque del SDIO y lleva pull-up interno), y **GPIO21 es el SDA
+   > por defecto**, que conviene reservar por si llega una pantalla I2C.
+   > Descartados de verdad: **0, 2, 5, 12, 15** (strapping), **6-11** (flash
+   > SPI), **34-39** (sólo entrada, sin pull-up interno), **1 y 3** (UART0) y
+   > **16** (RX2 del GPS). Libres y seguros: **4, 13, 14, 17, 18, 19, 23, 25,
+   > 26, 27, 32 y 33**. El firmware ahora lleva `#error` para los peligrosos.
 3. **Buzzer.** Llegan 20 buzzers piezo pasivos el 19-sep; hoy la baliza se
    simula con el LED a 2 Hz.
 
@@ -163,6 +212,64 @@ CANCEL_WINDOW_MS   = 10000
 | Dejar que la ventana expire | Vuelta a `IDLE`, alerta **confirmada** |
 
 El antirrebote de 50 ms se aplica **al flanco de bajada y al de subida**.
+
+---
+
+## 2-bis. Pulsador externo y buzzer (19-sep)
+
+Ambos se configuran con `-D` desde `platformio.ini`. **Con los valores por
+defecto el llavero se comporta igual que siempre**, así que se puede compilar
+y flashear hoy, antes de tener el hardware en la mano.
+
+| Flag | Por defecto | Para qué |
+|---|---|---|
+| `EXT_BUTTON_PIN` | `4` | GPIO del pulsador externo; `-1` lo desactiva |
+| `BOOT_BUTTON_ENABLED` | `1` | Si el BOOT de la placa también dispara alertas |
+| `BUZZER_ENABLED` | `0` | Compila el buzzer piezo pasivo |
+| `BUZZER_PIN` | `25` | GPIO del buzzer |
+| `BUZZER_FREQ_HZ` | `2700` | Frecuencia del tono |
+
+El botón se lee con un **OR**: `pulsado = BOOT || externo`. Un pin con
+`INPUT_PULLUP` y nada conectado lee HIGH, así que tener el pulsador compilado
+pero sin cablear **no dispara nada**.
+
+### Cableado del pulsador
+
+```
+GPIO4 ----+---- [ pulsador ] ---- GND
+          |
+          +---- [ 10 kΩ ] ---- 3V3     (opcional, recomendable con cable largo)
+          |
+          +---- [ 100 nF ] --- GND     (opcional, antirruido)
+```
+
+El pull-up interno del ESP32 son unos 45 kΩ: de sobra para 10-20 cm de cable,
+flojo para el cable largo de un llavero, que hace de antena.
+
+> ⚠️ **Cuando cablees el pulsador, compila con `-D BOOT_BUTTON_ENABLED=0`.**
+> El DTR del CP2102 está cableado a GPIO0, el pin de BOOT (incidencia I10):
+> mientras BOOT siga activo, cualquier terminal que abra el puerto con DTR
+> puede fabricar una alerta fantasma. Desactivándolo, el llavero deja de
+> depender de un pin que el USB puede mover solo.
+
+### Cableado del buzzer
+
+Piezo **pasivo** (no trae oscilador, hay que darle frecuencia):
+
+```
+GPIO25 ---- [ + buzzer - ] ---- GND
+```
+
+Si el buzzer pide más de 40 mA o es de 5 V, hace falta un transistor; un piezo
+normal va directo al GPIO.
+
+> **Por qué no se usa `analogWrite()` ni `tone()` para el buzzer.** En
+> arduino-esp32 2.0.17, `analogWrite()` reparte canales LEDC **de arriba
+> abajo**, así que el LED de GPIO2 se queda con el **canal 15**, y además llama
+> a `ledcSetup()` **en cada escritura**, o sea en cada vuelta del `loop()`. Un
+> buzzer en un canal del mismo timer (el 14) sonaría destrozado. Por eso el
+> buzzer usa **LEDC directo en el canal 0**, que está en otro timer. Y `tone()`
+> se descartó porque monta una tarea de FreeRTOS entera sólo para esto.
 
 ### Realimentación visual del LED
 

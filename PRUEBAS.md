@@ -1,11 +1,16 @@
 # PRUEBAS · GEO-EXPO ALERT (firmware etapa 1)
 
-Placa: ESP32 DevKit V1 · Firmware: `src/main.cpp` · Última sesión con la placa: **9-sep-2026** · Última revisión del código: **10-sep-2026**
+Placa: ESP32 DevKit V1 · Firmware: `src/main.cpp` · Última sesión con la placa: **18-sep-2026** · Última revisión del código: **19-sep-2026**
 
-> ⚠️ **Los cambios del 10-sep NO están probados en la placa** (se trabajó sin
-> ella). Están cubiertos por las pruebas automáticas de la §0-bis, pero la
-> tabla de abajo sigue reflejando la sesión del 9-sep. Al volver a tener el
-> ESP32: flashear y repetir **0.4, 0.5, 1.1-1.10 y 3.x**.
+> ✅ **Los cambios del 10-sep ya están probados en la placa.** Se revalidaron
+> el 18-sep desde un PC con Windows: resultados en la **§0-ter**, incluidos los
+> 10 arranques seguidos que pedía la incidencia I12. La tabla de las §1 y §2
+> conserva las observaciones del 9-sep; lo medido el 18-sep está en la §0-ter
+> para no borrar el histórico.
+>
+> ⚠️ **Lo del 19-sep (botón externo, buzzer y tres arreglos de BLE/comandos)
+> vuelve a estar sin probar en la placa**: el binario cambió, así que hay que
+> repetir los 10 arranques de la I12 y la §3-ter.
 
 Marca cada casilla: **x** = pasado con registro · *?* = dado por bueno sin log · ☐ = sin probar.
 Monitor serie a **115200 bps**. App móvil: **nRF Connect for Mobile**.
@@ -47,6 +52,59 @@ exactos, un rebote de 1 ms, o lo que pasa a los 49,7 días cuando `millis()`
 vuelve a cero. Los casos 1.6, 1.7, 1.9 y 1.10 de la tabla de abajo tienen ahí
 su equivalente automático, así que una regresión sale a la luz sin tener que
 volver a pulsar el botón con un cronómetro.
+
+---
+
+## 0-ter. Revalidación en la placa — 18-sep-2026 (desde un PC con Windows)
+
+Por fin se probó en el ESP32 todo lo que el 10-sep se había hecho a ciegas.
+Tres diferencias de entorno respecto a las sesiones anteriores:
+
+- El puerto ya no es `/dev/ttyUSB0` sino **`COM3`**. Windows dejó el CP2102 en
+  **código 28** («no hay driver») hasta instalar a mano el *CP210x Universal
+  Windows Driver* de Silicon Labs.
+- `pio device monitor` sigue sin funcionar desde Claude Code (incidencia I9),
+  así que se usó **`tools/hw.py`**, un arnés de pyserial que además **pulsa
+  BOOT por software** (DTR → GPIO0, el mismo truco del caso 1.6) y **resetea
+  por RTS** (→ EN). Gracias a eso los tiempos se miden al milisegundo en vez
+  de a ojo con un cronómetro.
+- Los tres cables micro-USB de repuesto volvieron a fallar: son de **solo
+  carga** (incidencia I1). El LED rojo encendía pero Windows no enumeraba
+  absolutamente nada, ni un dispositivo con error.
+
+Binario probado: commit `4f4b050`, RAM **11,2 %**, Flash **45,9 %**.
+
+| # | Caso | Resultado medido | OK |
+|---|---|---|:--:|
+| 0.2 | Puerto serie | `COM3`, `Silicon Labs CP210x`, tras instalar el driver | **x** |
+| 0.4 | Flashea | `[SUCCESS]` a 115200. Misma unidad: MAC `3c:8a:1f:a7:31:d8`, ESP32-D0WD-V3 rev 3.1 | **x** |
+| 0.5 | Banner | Completo, con `Estado inicial: IDLE` a los **418 ms** | **x** |
+| **I12** | **10 arranques seguidos** | **10 de 10 limpios**: `init() completado` y `IDLE` en los diez, `rst:0x1 (POWERON_RESET)` siempre, ni un `TG1WDT_SYS_RESET` | **x** |
+| 1.1 | Pulsación corta | `ALERT:1` a t=34655 ms | **x** |
+| 1.2 | La ventana expira | **10 000 ms exactos** (34655 → 44655) | **x** |
+| 1.3 | Pulsación prolongada | `ALERT:2` a los **3000 ms exactos** de `PRESSED` (56965 → 59965) | **x** |
+| 1.4 | Soltar tras la larga | `cancelación ARMADA` ~500 ms después de soltar | **x** |
+| 1.5 | Cancelar desde corta | `CANCEL` y **ningún** `ALERT:1` fantasma detrás | **x** |
+| 1.6 | Cancelar desde larga | `ALERT:2` → `ARMADA` al soltar → `CANCEL` | **x** |
+| 1.7 | Antirrebote de bajada | Pulso de 20 ms → `DEBOUNCE → IDLE (rebote/ruido)`, sin alerta | **x** |
+| 1.8 | Antirrebote de subida | Un solo `ALERT:1` por pulsación | **x** |
+| 1.9 | Umbral just-in-time | 2800 ms → `ALERT:1`; **2970 ms → `ALERT:1`** (dentro de la franja del fallo I11); 3100 ms → `ALERT:2` | **x** |
+| 1.10 | Reingreso tras confirmar | Dos ciclos completos encadenados, sin residuos de estado | **x** |
+| **I13** | Pulsación justo tras un rebote | Rebote de 20 ms + pulsación de 400 ms → `ALERT:1`. **Primera vez comprobado en hardware**: la pulsación ya no se pierde | **x** |
+| 2.1 | `BEACON:ON` | `baliza ACTIVADA` | **x** |
+| 2.2 | Prioridad de la baliza | Con la baliza activa, `ALERT:1` sale igual por serie | *?* |
+| 2.3 | `BEACON:OFF` | `baliza DESACTIVADA` | **x** |
+| 2.4 | Comando inválido | `HOLA` → `comando no reconocido` | **x** |
+| 2.5 | Ayuda | `?` imprime la ayuda | **x** |
+| — | Comandos en minúsculas | `beacon:on` se acepta igual que `BEACON:ON` | **x** |
+
+> La **2.2 queda a medias a propósito**: el log está comprobado, pero lo que
+> hay que juzgar es **el LED**, y eso no aparece en ningún registro. Falta que
+> una persona mire la placa y confirme que sigue a 2 Hz mientras se pulsa.
+>
+> Las tildes salían corruptas en la consola de Windows, pero **no es un fallo
+> del firmware**: leyendo los bytes crudos del puerto, la placa manda UTF-8
+> correcto (`bot\xc3\xb3n`). Era la consola, no el ESP32.
 
 ---
 
@@ -118,6 +176,30 @@ el mismo manejador). Copia las tramas **enteras**, con `$` y `*HH`.
 
 ---
 
+## 3-ter. Botón externo y buzzer — cambios del 19-sep
+
+El pulsador externo ya está soportado y **activo por defecto** en `GPIO4`, con
+el BOOT funcionando en paralelo (`pulsado = BOOT || externo`). El buzzer está
+implementado pero **apagado** (`-D BUZZER_ENABLED=1` para encenderlo). Detalle
+y cableado en el README §2-bis.
+
+| # | Caso | Procedimiento | Resultado esperado | OK |
+|---|---|---|---|:--:|
+| 3c.1 | Pin al aire no dispara nada | Sin cablear nada en GPIO4, dejar la placa quieta 60 s | Ni una transición de la FSM: con `INPUT_PULLUP` un pin al aire lee HIGH | ☐ |
+| 3c.2 | Banner | Arrancar y leer el banner | Dice `Pulsador externo : GPIO4` y `Buzzer : desactivado` | ☐ |
+| 3c.3 | El pulsador externo alerta | Cablear GPIO4 → pulsador → GND y pulsar corto | `ALERT:1` exactamente igual que con BOOT | ☐ |
+| 3c.4 | Pulsación larga por el externo | Mantener el pulsador 3 s | `ALERT:2` a los 3000 ms | ☐ |
+| 3c.5 | Guarda de pines peligrosos | `PLATFORMIO_BUILD_FLAGS="-D EXT_BUTTON_PIN=5" pio run -e devkit_v1` | **No compila**: `#error ... es un strapping pin (0/2/5/12/15)` | **x** |
+| 3c.6 | BOOT desactivable (I10) | Compilar con `-D BOOT_BUTTON_ENABLED=0` y abrir un terminal con DTR activo | El DTR ya no genera alertas fantasma; solo responde el pulsador externo | ☐ |
+| 3c.7 | Buzzer suena | Con `-D BUZZER_ENABLED=1` y el piezo en GPIO25, mandar `BEACON:ON` | Pita a 2 Hz a la vez que el LED | ☐ |
+| 3c.8 | El buzzer no estropea el LED | Con el buzzer activo, mirar el parpadeo del LED | El LED sigue igual: el buzzer usa el canal LEDC **0** y el LED el **15**, que están en timers distintos | ☐ |
+| 3c.9 | Trama NMEA con minúsculas | Inyectar una trama con minúsculas y checksum correcto | **ACEPTADA** (antes se descartaba: el comando pasaba la trama a mayúsculas y eso cambia el XOR) | ☐ |
+| 3c.10 | Log honesto de TX | Conectar un móvil **sin** suscribirse a TX y pulsar | `(cliente conectado pero SIN suscribirse a TX: NO lo recibe)` en vez del viejo `(enviado por BLE)` | ☐ |
+| 3c.11 | Sigue visible con un cliente (I16) | Con un móvil conectado, escanear desde otro | El llavero **sigue apareciendo**: ahora el advertising se relanza al conectar | ☐ |
+| 3c.12 | 10 arranques con el binario nuevo | `tools/hw.py` con 10 resets | 10 de 10 con `init() completado` (obligatorio: el binario cambió, y la I12 depende del layout) | ☐ |
+
+---
+
 ## 4. Verificación final (la checklist del enunciado)
 
 | # | Requisito | Casos que lo cubren | OK | Estado |
@@ -160,9 +242,10 @@ Lo que costó tiempo de verdad en la sesión del 9-sep. Casi nada fue el código
 
 ## Qué falta por probar
 
-- **Reflashear y revalidar todo lo del 10-sep** (§0-bis dice qué está cubierto
-  por pruebas automáticas y qué no). En especial **10 arranques seguidos** por
-  la incidencia I12.
+- **Toda la §3-ter**: es lo del 19-sep (botón externo, buzzer, log honesto de
+  TX, advertising con cliente conectado) y **no se ha probado en la placa**.
+  Lo más importante de ahí son los **10 arranques** del caso 3c.12, porque el
+  binario cambió y la I12 depende del layout.
 - **2.2** prioridad de la baliza sobre el patrón de alerta (hay que **mirar el LED**, no se puede
   comprobar desde el log).
 - **I14** en la placa: conectar **dos** móviles, desconectar uno y comprobar que
