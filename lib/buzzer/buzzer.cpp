@@ -37,6 +37,11 @@ static const Step STEPS_FIND[] = {
 static const Step STEPS_LINK_LOST[] = {
     {1400, 200}, {0, 120}, {1100, 300},
 };
+/* Pitido suelto y corto del "caliente/frío": tiene que caber DENTRO del
+ * periodo más rápido (150 ms en la zona AQUI) o se cortaría a sí mismo. */
+static const Step STEPS_PING[] = {
+    {3600, 45},
+};
 
 const Pattern PATTERN_BOOT(STEPS_BOOT, 3, 0, Prio::UI);
 const Pattern PATTERN_ALERT_SHORT(STEPS_ALERT_SHORT, 1, 0, Prio::ALERT);
@@ -46,6 +51,7 @@ const Pattern PATTERN_CONFIRMED(STEPS_CONFIRMED, 3, 0, Prio::ALERT);
 const Pattern PATTERN_BEACON(STEPS_BEACON, 2, REPEAT_FOREVER, Prio::BEACON);
 const Pattern PATTERN_FIND(STEPS_FIND, 4, REPEAT_FOREVER, Prio::BEACON);
 const Pattern PATTERN_LINK_LOST(STEPS_LINK_LOST, 3, 0, Prio::UI);
+const Pattern PATTERN_PING(STEPS_PING, 1, 0, Prio::UI);
 
 /* ==========================================================================
  *  Reproductor
@@ -78,7 +84,12 @@ void Player::stop() {
 }
 
 void Player::stopIf(const Pattern& p) {
+  if (m_bg != nullptr && m_bg->steps == p.steps) m_bg = nullptr;
   if (m_active && m_steps == p.steps) stop();
+}
+
+void Player::setBackground(const Pattern* p) {
+  m_bg = (p != nullptr && p->steps != nullptr && p->count > 0) ? p : nullptr;
 }
 
 uint16_t Player::currentFreq() const {
@@ -110,6 +121,15 @@ Out Player::update(uint32_t now) {
       }
     }
     if (!m_primed) { m_primed = true; m_tStep = now; }
+  }
+
+  /* Nada sonando y hay patrón de fondo: vuelve solo. Es lo que hace que la
+   * baliza siga después de que una alerta la haya interrumpido. */
+  if (!m_active && m_bg != nullptr) {
+    const Pattern* bg = m_bg;     // play() no toca m_bg, pero se copia por claridad
+    play(*bg, now, /*force=*/true);
+    m_primed = true;
+    m_tStep  = now;
   }
 
   const uint16_t freq = m_muted ? 0 : currentFreq();

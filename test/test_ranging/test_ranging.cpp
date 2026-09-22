@@ -152,6 +152,21 @@ static void test_tendencia_acercarse_y_alejarse(void) {
   TEST_ASSERT_EQUAL_INT8(0, e.trend());               // quieto es quieto
 }
 
+static void test_el_plazo_de_silencio_aguanta_una_baliza_perdida(void) {
+  /* El llavero baliza cada 15 s. Perder UNA trama es rutinario en radio, y no
+   * puede significar "SIN SENAL": si no, el buscador parpadearia entre CERCA
+   * y SIN SENAL toda la expo. El plazo tiene que cubrir dos balizas y pico. */
+  const ranging::Config cfg;
+  const uint32_t BALIZA_LENTA_MS = 15000;
+  TEST_ASSERT_TRUE(cfg.lostAfterMs > 2 * BALIZA_LENTA_MS);
+
+  ranging::Estimator e(cfg);
+  e.reset();
+  e.push(-70.0f, 1000);
+  e.update(1000 + 2 * BALIZA_LENTA_MS + 500);   // se perdio una baliza
+  TEST_ASSERT_TRUE(e.zone() != ranging::Zone::LOST);
+}
+
 static void test_silencio_medido(void) {
   ranging::Estimator e;
   e.reset();
@@ -175,6 +190,7 @@ int main(int, char**) {
   RUN_TEST(test_se_pierde_tras_el_silencio);
   RUN_TEST(test_al_recuperar_la_senal_no_arrastra_lo_viejo);
   RUN_TEST(test_tendencia_acercarse_y_alejarse);
+  RUN_TEST(test_el_plazo_de_silencio_aguanta_una_baliza_perdida);
   RUN_TEST(test_silencio_medido);
   return UNITY_END();
 }

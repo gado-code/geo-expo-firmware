@@ -52,9 +52,14 @@ struct Config {
   float alpha;         // suavizado exponencial: 0 = no se mueve, 1 = sin filtro
   uint32_t lostAfterMs;// sin tramas durante esto -> LOST
 
+  /* OJO con `lostAfterMs`: tiene que ser MAYOR que dos o tres balizas
+   * seguidas del otro lado. Con balizas cada 15 s y un plazo de 20 s bastaba
+   * con perder UNA trama —cosa rutinaria en radio— para declarar "SIN SEÑAL",
+   * apagar los pitidos y volver a la vida a la trama siguiente: en la expo se
+   * habría visto como un parpadeo constante entre "CERCA" y "SIN SEÑAL". */
   Config(float here = -55.0f, float near_ = -85.0f, float far = -110.0f,
          float at1m = -45.0f, float n = 2.7f, float a = 0.35f,
-         uint32_t lost = 20000)
+         uint32_t lost = 45000)
       : rssiHere(here), rssiNear(near_), rssiFar(far), rssiAt1m(at1m),
         pathLossExp(n), alpha(a), lostAfterMs(lost) {}
 };

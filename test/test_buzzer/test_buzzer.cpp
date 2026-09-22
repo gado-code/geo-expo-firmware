@@ -97,11 +97,57 @@ static void test_un_hueco_grande_de_loop_no_estira_el_patron(void) {
 }
 
 /* ---------------------------------------------------------- prioridades ---*/
-static void test_la_baliza_no_la_pisa_una_alerta(void) {
+static void test_una_alerta_si_interrumpe_la_baliza(void) {
+  /* Con la baliza encendida, pulsar el boton de panico TIENE que sonar. Antes
+   * la baliza tenia mas prioridad y la alerta se quedaba muda: el usuario no
+   * sabia si su alerta habia salido. */
   buzzer::Player p;
-  TEST_ASSERT_TRUE(p.play(buzzer::PATTERN_BEACON, 0));      // prioridad BEACON
-  TEST_ASSERT_FALSE(p.play(buzzer::PATTERN_ALERT_SHORT, 10));
+  TEST_ASSERT_TRUE(p.play(buzzer::PATTERN_BEACON, 0));
+  TEST_ASSERT_TRUE(p.play(buzzer::PATTERN_ALERT_SHORT, 10));
+  TEST_ASSERT_EQUAL_UINT8(buzzer::Prio::ALERT, p.priority());
+}
+
+static void test_la_baliza_de_fondo_vuelve_tras_la_alerta(void) {
+  /* ...y la baliza no se pierde por ello: como patron de FONDO, vuelve sola
+   * en cuanto la alerta termina de sonar. */
+  buzzer::Player p;
+  p.setBackground(&buzzer::PATTERN_BEACON);
+  p.update(0);
+  TEST_ASSERT_TRUE(p.busy());                       // arranca sola
   TEST_ASSERT_EQUAL_UINT8(buzzer::Prio::BEACON, p.priority());
+
+  TEST_ASSERT_TRUE(p.play(buzzer::PATTERN_ALERT_SHORT, 100));
+  buzzer::Out o = p.update(100);
+  TEST_ASSERT_EQUAL_UINT8(buzzer::Prio::ALERT, p.priority());
+
+  o = runUntil(p, 101, 600);                        // la alerta dura 250 ms
+  TEST_ASSERT_TRUE(o.active);                       // sigue sonando algo...
+  TEST_ASSERT_EQUAL_UINT8(buzzer::Prio::BEACON, p.priority());   // ...la baliza
+
+  p.setBackground(nullptr);
+  p.stop();
+  TEST_ASSERT_FALSE(p.update(700).active);          // y sin fondo, se calla
+}
+
+static void test_stopIf_tambien_quita_el_fondo(void) {
+  // BEACON:OFF tiene que apagar la baliza de verdad, no dejarla renaciendo.
+  buzzer::Player p;
+  p.setBackground(&buzzer::PATTERN_BEACON);
+  p.update(0);
+  TEST_ASSERT_TRUE(p.busy());
+  p.stopIf(buzzer::PATTERN_BEACON);
+  TEST_ASSERT_NULL(p.background());
+  TEST_ASSERT_FALSE(p.update(1).active);
+}
+
+static void test_el_ping_cabe_en_el_periodo_mas_rapido(void) {
+  /* El "caliente/frio" repite el ping cada 150 ms en la zona AQUI: si el
+   * patron durase mas, se cortaria a si mismo en la zona que mas importa. */
+  uint32_t total = 0;
+  for (uint8_t i = 0; i < buzzer::PATTERN_PING.count; ++i) {
+    total += buzzer::PATTERN_PING.steps[i].ms;
+  }
+  TEST_ASSERT_TRUE(total < 150);
 }
 
 static void test_una_alerta_si_pisa_un_bip_de_interfaz(void) {
@@ -161,7 +207,8 @@ static void test_los_patrones_del_proyecto_estan_completos(void) {
       &buzzer::PATTERN_BOOT,      &buzzer::PATTERN_ALERT_SHORT,
       &buzzer::PATTERN_ALERT_LONG,&buzzer::PATTERN_CANCEL,
       &buzzer::PATTERN_CONFIRMED, &buzzer::PATTERN_BEACON,
-      &buzzer::PATTERN_FIND,      &buzzer::PATTERN_LINK_LOST};
+      &buzzer::PATTERN_FIND,      &buzzer::PATTERN_LINK_LOST,
+      &buzzer::PATTERN_PING};
   for (unsigned i = 0; i < sizeof(todos) / sizeof(todos[0]); ++i) {
     TEST_ASSERT_NOT_NULL(todos[i]->steps);
     TEST_ASSERT_TRUE(todos[i]->count > 0);
@@ -179,7 +226,10 @@ int main(int, char**) {
   RUN_TEST(test_repeticion_finita);
   RUN_TEST(test_repeticion_infinita_no_para_sola);
   RUN_TEST(test_un_hueco_grande_de_loop_no_estira_el_patron);
-  RUN_TEST(test_la_baliza_no_la_pisa_una_alerta);
+  RUN_TEST(test_una_alerta_si_interrumpe_la_baliza);
+  RUN_TEST(test_la_baliza_de_fondo_vuelve_tras_la_alerta);
+  RUN_TEST(test_stopIf_tambien_quita_el_fondo);
+  RUN_TEST(test_el_ping_cabe_en_el_periodo_mas_rapido);
   RUN_TEST(test_una_alerta_si_pisa_un_bip_de_interfaz);
   RUN_TEST(test_force_manda_siempre);
   RUN_TEST(test_stopIf_solo_para_lo_suyo);

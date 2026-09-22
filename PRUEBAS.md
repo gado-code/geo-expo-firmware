@@ -40,11 +40,11 @@ pio test -e devkit_v1   # las mismas pruebas, ejecutadas en el ESP32
 |---|---|---|:--:|:--:|
 | 0.6 | `test/test_nmea/` | Parseo NMEA: GGA, RMC, hemisferios con signo, checksum corrupto, trama sin fix, desbordamiento, flujo carácter a carácter | 16 | **x** |
 | 0.7 | `test/test_panic/` | FSM del botón: umbral de los 3 s, rebotes al pulsar y al soltar, cancelar desde corta y desde larga, ventana que expira, arranque con el botón pulsado, ciclos encadenados, desbordamiento de `millis()` | 18 | **x** |
-| 0.8 | `test/test_link/` | Protocolo GEO-LINK: ida y vuelta de todos los campos, coordenadas negativas, tamaño/magic/versión/tipo malos, **un bit cambiado en cualquier byte firmado**, clave distinta, orden falsificada, contador circular y antirrepetición | 20 | **x** |
-| 0.9 | `test/test_ranging/` | Cercanía: umbrales de zona, distancia a 1 m y su crecimiento, configuración absurda sin dividir por cero, suavizado que amortigua un pico, pérdida de señal por silencio, recuperación sin arrastrar lo viejo, tendencia acercarse/alejarse | 14 | **x** |
-| 0.10 | `test/test_buzzer/` | Zumbador: un patrón suena y termina, repetición finita e infinita, un `loop()` atascado no estira el patrón, prioridades (la baliza no la pisa una alerta), `stopIf`, modo mudo, patrón vacío | 13 | **x** |
+| 0.8 | `test/test_link/` | Protocolo GEO-LINK: ida y vuelta de todos los campos, coordenadas negativas, tamaño/magic/versión/tipo malos, **un bit cambiado en cualquier byte firmado**, clave distinta, orden falsificada, contador circular y antirrepetición | 22 | **x** |
+| 0.9 | `test/test_ranging/` | Cercanía: umbrales de zona, distancia a 1 m y su crecimiento, configuración absurda sin dividir por cero, suavizado que amortigua un pico, pérdida de señal por silencio, recuperación sin arrastrar lo viejo, tendencia acercarse/alejarse | 15 | **x** |
+| 0.10 | `test/test_buzzer/` | Zumbador: un patrón suena y termina, repetición finita e infinita, un `loop()` atascado no estira el patrón, prioridades (la baliza no la pisa una alerta), `stopIf`, modo mudo, patrón vacío | 16 | **x** |
 
-Resultado del 22-sep: **81 de 81 pasan** (34 del 10-sep + 47 nuevas).
+Resultado del 22-sep: **87 de 87 pasan** (34 del 10-sep + 53 nuevas).
 
 > Si `pio` no puede descargar el toolchain (sin red, o el registro bloqueado),
 > `./tools/comprobar-sintaxis.sh` al menos comprueba que los dos firmwares
@@ -236,3 +236,34 @@ Lo que costó tiempo de verdad en la sesión del 9-sep. Casi nada fue el código
 - **I12**: encontrar la causa real del cuelgue en `NimBLEDevice::init()`.
 - **3.6 / 3.7** recibir `ALERT:2` y `CANCEL` **por BLE** (por serie ya están).
 - **3.8 / 3.9** `BEACON:ON` / `BEACON:OFF` desde el móvil, dejándolo en el log.
+
+---
+
+## Revisión cruzada del 22-sep (segunda pasada sobre el código nuevo)
+
+Antes de dar la sesión por buena se hizo una revisión completa del firmware
+nuevo buscando fallos de corrección, no de estilo. Salieron **ocho** que
+merecían arreglo; ninguno se habría visto sin las placas delante, y tres de
+ellos dejaban el aparato sin hacer justo lo que tiene que hacer:
+
+| # | Qué pasaba | Arreglo |
+|---|---|---|
+| R1 | **Las Heltec se habrían quedado sin monitor serie.** `platformio.ini` traía `ARDUINO_USB_CDC_ON_BOOT=1` dando por hecho que la V3 usa el USB nativo del S3, pero su USB-C va a un **CP2102**: `Serial` habría salido por un puerto no cableado. Sin banner, sin trazas y sin comandos, o sea sin demo y sin poder depurar nada. | Fuera los flags `ARDUINO_USB_*`; el puerto es `/dev/ttyUSB0`. |
+| R2 | **Con la baliza encendida, el botón de pánico era MUDO**: la baliza tenía más prioridad que la alerta, así que el usuario no tenía confirmación de que su alerta había salido. | Manda la alerta (`Prio::ALERT` es ahora la más alta) y la baliza pasa a ser **patrón de fondo**: la alerta la interrumpe y la baliza vuelve sola al terminar. |
+| R3 | **Tras cambiar la pila del buscador, sus primeras órdenes se perdían** sin aviso: su contador volvía a cero y el llavero las tiraba por repetidas. | El contador se guarda también en la flash (NVS) reservando bloques de 256, y la trama que dispara la resincronización ya se atiende en vez de descartarse. |
+| R4 | **"SIN SEÑAL" cada dos por tres**: el plazo de silencio (20 s) era menor que dos balizas (2 × 15 s), así que perder una sola trama bastaba para apagar el caliente/frío. | El plazo se ata a la cadencia de la baliza (× 3) y hay una prueba que cruza los dos valores. |
+| R5 | La antirrepetición se caía sola pasadas ~32768 tramas: a partir de ahí las grabaciones viejas volvían a parecer nuevas. | Tope de salto hacia adelante (`MAX_JUMP = 4096`), con dos pruebas nuevas. |
+| R6 | El llavero daba por bueno **cualquier** ACK, aunque confirmara un envío anterior. | Se comprueba el eco del `seq` y el código; si no casa, se dice en el log. |
+| R7 | El aviso sonoro de "BLE desactivado" no llegaba a oírse: la melodía de arranque, de la misma prioridad, sonaba justo después y lo tapaba. | Si el BLE arranca desactivado, no suena la melodía normal. |
+| R8 | En la Heltec, un `-D PIN_BUZZER_CFG=25` copiado del firmware de la DevKit compilaba y no sonaba nunca: **en el ESP32-S3 no existe el GPIO25**. | `#error` para los GPIO 22-25 y 26-32, y la documentación corregida (GPIO6/7). |
+
+Además se endureció la radio: la bandera de la interrupción se lee y se borra
+de golpe, el rescate por tiempo no deja avisos fantasma, y si `startReceive()`
+falla se dice en el log y se reintenta cada 2 s en vez de quedarse sorda
+creyendo que escucha.
+
+> Lo que la revisión **no** encontró: ninguna llamada inexistente o con otra
+> firma en RadioLib 6.x, NimBLE 1.4.x ni arduino-esp32 2.0.17; ningún
+> desbordamiento de buffer; ningún problema con el desbordamiento de
+> `millis()`. Eso no quiere decir que no los haya: quiere decir que hay que
+> probarlo en placa igual.

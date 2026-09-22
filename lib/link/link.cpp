@@ -271,7 +271,12 @@ void ReplayGuard::forget(uint16_t src) {
 bool ReplayGuard::accept(uint16_t src, uint16_t seq) {
   for (uint8_t i = 0; i < MAX_PEERS; ++i) {
     if (m_peers[i].used && m_peers[i].id == src) {
-      if (!seqNewer(seq, m_peers[i].lastSeq)) { ++m_rejected; return false; }
+      // Ni hacia atrás ni un salto disparatado hacia adelante (ver MAX_JUMP).
+      const uint16_t avance = (uint16_t)(seq - m_peers[i].lastSeq);
+      if (!seqNewer(seq, m_peers[i].lastSeq) || avance > MAX_JUMP) {
+        ++m_rejected;
+        return false;
+      }
       m_peers[i].lastSeq = seq;
       return true;
     }

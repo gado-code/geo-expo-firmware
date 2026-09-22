@@ -172,9 +172,13 @@ double  fixedToDeg(int32_t fixed);
  *  demasiado viejo. La comparación es circular (el contador desborda a los
  *  65535 y eso es normal, no un ataque).
  *
- *  `WINDOW` es cuánto se permite que un emisor "salte" hacia adelante: si el
- *  llavero estuvo apagado y vuelve con un seq mucho mayor, se acepta; lo que
- *  no se acepta es retroceder, que es lo que haría una grabación del aire.
+ *  `MAX_JUMP` es cuánto se permite que un emisor salte hacia adelante de una
+ *  vez. Sin ese tope, la protección se cae sola: como la comparación circular
+ *  considera "más nuevo" a todo lo que esté dentro de media vuelta del
+ *  contador, en cuanto el emisor pasa de 32768 tramas las grabaciones VIEJAS
+ *  vuelven a parecer nuevas y colarían otra vez. Con el tope, un salto enorme
+ *  se rechaza igual que un retroceso, y quien de verdad se reinició se
+ *  recupera por la vía de `forget()`.
  * ------------------------------------------------------------------------*/
 
 /* ¿`a` es más nuevo que `b` en aritmética circular de 16 bits? */
@@ -182,7 +186,11 @@ bool seqNewer(uint16_t a, uint16_t b);
 
 class ReplayGuard {
  public:
-  static const uint8_t MAX_PEERS = 4;
+  static const uint8_t  MAX_PEERS = 4;
+  /* Salto máximo hacia adelante que se acepta de golpe. 4096 tramas son más
+   * de 17 horas de baliza lenta: de sobra para cualquier hueco normal (una
+   * placa fuera de alcance un rato), y corta el agujero de la media vuelta. */
+  static const uint16_t MAX_JUMP = 4096;
 
   void reset();
 

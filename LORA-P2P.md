@@ -10,7 +10,7 @@ con una vuelta de tuerca: aquí el llavero **también puede gritar**.
 | `heltec_finder` | **BUSCADOR** | Se queda con quien vigila. Oye al llavero, dice si está cerca o lejos, confirma las alertas y puede hacerle pitar. |
 
 > **Estado: escrito y revisado, SIN probar en placa.** El protocolo, la
-> estimación de cercanía y los patrones de sonido están cubiertos por 47
+> estimación de cercanía y los patrones de sonido están cubiertos por 53
 > pruebas automáticas que corren en el PC (`pio test -e native`), y los dos
 > firmwares pasan la comprobación de sintaxis (`tools/comprobar-sintaxis.sh`).
 > Pero **nada de esto ha visto una Heltec todavía**: la §7 es la lista de lo
@@ -44,7 +44,7 @@ Conviene tenerlo claro porque son dos cosas distintas:
 
 | Mensaje | Significa | Efecto en el llavero |
 |---|---|---|
-| `ACK` | "me ha llegado" | Deja de reintentar |
+| `ACK` | "me ha llegado" | Deja de reintentar (se comprueba que confirma *ese* envío, no uno anterior) |
 | `FAST_OFF` (o `STOP` en el buscador) | "ya está atendida" | Cierra la alerta y vuelve a la baliza lenta |
 
 Un `ACK` **no** cierra la alerta: mientras nadie diga que está atendida, el
@@ -103,8 +103,9 @@ trazas salen por el monitor serie.
 
 | Pieza | Dónde | Notas |
 |---|---|---|
-| Zumbador piezo **pasivo** | `GPIO25` y GND | Descomenta `-D PIN_BUZZER_CFG=25` en `[heltec_base]`. Sin él, el "caliente/frío" sólo se ve en el LED y en el monitor. |
+| Zumbador piezo **pasivo** | `GPIO6` (o `GPIO7`) y GND | Descomenta `-D PIN_BUZZER_CFG=6` en `[heltec_base]`. **No uses GPIO25**: en el ESP32-S3 ese pin no existe (no hay 22-25, y 26-32 son flash/PSRAM); hay un `#error` que lo impide. |
 | Botón externo | `GPIO4`, `5`, `6`, `7` … a GND | `-D PIN_BUTTON_CFG=<pin>`. El PRG (GPIO0) vale para probar, pero es pin de arranque. |
+| Batería | divisor de fábrica en `GPIO1`, habilitado por `GPIO37` | `-D PIN_VBAT_CFG=1`. El porcentaje viaja en cada trama y el buscador lo enseña. |
 | GPS (NEO-6M/7M) | TX del GPS → `GPIO4` | `-D GPS_UART_ENABLED=1`. Al GPS no le mandamos nada: su RX se queda sin conectar. |
 
 Pines de la radio (van soldados en la placa, no se tocan): `NSS 8`, `SCK 9`,
@@ -120,9 +121,12 @@ pio run -e heltec_finder -t upload     # la placa del buscador
 pio device monitor -e heltec_finder    # ver qué oye
 ```
 
-El ESP32-S3 usa USB nativo: el puerto suele ser **`/dev/ttyACM0`**, no
-`ttyUSB0`. Si la placa no aparece, mantén **PRG** pulsado, pulsa **RST**,
-suelta **RST** y luego **PRG** para entrar en modo descarga.
+El USB-C de la Heltec V3 **no** es el USB nativo del S3: va a un puente
+**CP2102**, así que el puerto es **`/dev/ttyUSB0`**, igual que la DevKit (por
+eso `platformio.ini` no lleva los flags `ARDUINO_USB_CDC_ON_BOOT`; con ellos
+el monitor serie se queda mudo). Si la placa no aparece, mantén **PRG**
+pulsado, pulsa **RST**, suelta **RST** y luego **PRG** para entrar en modo
+descarga.
 
 ### Antes de la expo, cambia dos cosas en `platformio.ini`
 

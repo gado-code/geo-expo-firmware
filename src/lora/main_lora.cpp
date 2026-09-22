@@ -56,6 +56,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <SPI.h>
+#include <Preferences.h>
 #include <RadioLib.h>
 
 #include "link.h"
@@ -146,12 +147,35 @@
   #define BUTTON_ACTIVE_HIGH 0
 #endif
 
+/* Medida de batería de la Heltec V3: el divisor va a GPIO1 (ADC1_CH0) y sólo
+ * se habilita poniendo a nivel BAJO el "ADC_Ctrl" de GPIO37. Queda apagado
+ * por defecto (-1) porque no todas las unidades llevan batería. */
+#ifndef PIN_VBAT_CFG
+  #define PIN_VBAT_CFG -1
+#endif
+#ifndef PIN_VBAT_CTRL_CFG
+  #define PIN_VBAT_CTRL_CFG 37
+#endif
+
 static const int PIN_LED    = PIN_LED_CFG;
 static const int PIN_BUTTON = PIN_BUTTON_CFG;
 static const int PIN_BUZZER = PIN_BUZZER_CFG;
+static const int PIN_VBAT   = PIN_VBAT_CFG;
 
 #if (PIN_BUZZER_CFG >= 0) && (PIN_BUZZER_CFG == PIN_BUTTON_CFG || PIN_BUZZER_CFG == PIN_LED_CFG)
   #error "El zumbador no puede compartir pin con el boton ni con el LED"
+#endif
+/* El ESP32-S3 NO tiene los GPIO 22 a 25, y del 26 al 32 están ocupados por la
+ * flash y la PSRAM. Un -D PIN_BUZZER_CFG=25 copiado del firmware de la DevKit
+ * compilaría sin rechistar y el zumbador no sonaría jamás. */
+#if (PIN_BUZZER_CFG >= 22) && (PIN_BUZZER_CFG <= 25)
+  #error "En el ESP32-S3 no existen los GPIO22-25 (ese pin es de la DevKit, no de la Heltec V3)"
+#endif
+#if (PIN_BUZZER_CFG >= 26) && (PIN_BUZZER_CFG <= 32)
+  #error "En el ESP32-S3 los GPIO26-32 son de la flash/PSRAM: no se pueden usar"
+#endif
+#if (PIN_BUZZER_CFG >= 33)
+  #error "GPIO33+ en la Heltec V3: comprueba en el esquema que ese pin esta libre antes de forzarlo"
 #endif
 
 /* ==========================================================================
@@ -208,6 +232,9 @@ static const uint32_t LINK_LOST_MS = 45000;
 /* ==========================================================================
  *  4. OBJETOS GLOBALES
  * ==========================================================================*/
+/* trace() se define en la §5; aquí basta con declararla. */
+static void trace(const char* msg);
+
 static SPIClass    g_spi(HSPI);
 static SX1262      g_radio = new Module(PIN_LORA_NSS, PIN_LORA_DIO1, PIN_LORA_RST,
                                         PIN_LORA_BUSY, g_spi);
@@ -219,9 +246,51 @@ static link::ReplayGuard g_guard;
  * perro guardián) no lo devuelva a cero: si volviera atrás, el otro lado
  * tomaría nuestras tramas por repeticiones y las tiraría todas. Un apagón sí
  * lo pierde, y para eso está la resincronización de más abajo. */
+/* ¿`a` es igual o más nuevo que `b`? (aritmética circular, como en lib/link) */
+static inline bool seqNewerOrEqual(uint16_t a, uint16_t b) {
+  return a == b || link::seqNewer(a, b);
+}
+
 RTC_NOINIT_ATTR static uint32_t s_seqMagic;
 RTC_NOINIT_ATTR static uint16_t s_seq;
 static const uint32_t SEQ_MAGIC = 0x6E4C4B01;   // "nLK" + versión
+
+/* La memoria RTC no sobrevive a QUITAR LA CORRIENTE, y ahí el contador volvía
+ * a cero: tras un cambio de pila del buscador, sus primeras órdenes (FIND,
+ * STOP...) las tiraba el llavero por "repetidas" y el operador veía que el
+ * botón no hacía nada, sin ningún aviso. Así que el contador también se
+ * guarda en la flash (NVS).
+ *
+ * No se escribe en cada trama —la flash tiene sus ciclos contados—: se
+ * reserva un BLOQUE por adelantado. Al arrancar se lee el techo reservado, se
+ * empieza desde ahí y se guarda el techo siguiente. Lo peor que pasa es que
+ * un apagón "gaste" hasta 256 números de secuencia, que no le importan a
+ * nadie: lo que importa es que nunca vayan hacia atrás. */
+static const uint16_t SEQ_BLOCK = 256;
+static Preferences    g_prefs;
+static uint16_t       g_seqCeiling = 0;
+
+static void seqReserveBlock(uint16_t desde) {
+  g_seqCeiling = (uint16_t)(desde + SEQ_BLOCK);
+  g_prefs.putUShort("seq", g_seqCeiling);
+}
+
+static void seqBegin() {
+  if (!g_prefs.begin("geolink", /*readOnly=*/false)) {
+    trace("NVS: no se pudo abrir; el contador solo vivira en memoria RTC");
+    return;
+  }
+  const uint16_t guardado = g_prefs.getUShort("seq", 0);
+  // Se toma el mayor de los dos: la RTC manda tras un reinicio normal, la
+  // flash manda tras un apagón.
+  if (seqNewerOrEqual(guardado, s_seq)) s_seq = guardado;
+  seqReserveBlock(s_seq);
+}
+
+static void seqTick() {
+  // Al llegar al techo reservado se reserva el bloque siguiente.
+  if (s_seq >= g_seqCeiling) seqReserveBlock(s_seq);
+}
 
 /* Si el otro lado se reinicia en frío, su contador empieza de cero y nosotros
  * lo tomamos por repeticiones. Tras unas cuantas seguidas se da por hecho que
@@ -374,6 +443,25 @@ namespace radio {
     return "?";
   }
 
+  /* Vuelve a escuchar y AVISA si no puede. Antes se ignoraba el código de
+   * retorno: si startReceive() fallaba, la radio se quedaba sorda para
+   * siempre con el firmware convencido de estar escuchando. */
+  static uint32_t s_tRetry   = 0;
+  static uint16_t s_rxErrors = 0;
+
+  static bool listen() {
+    const int st = g_radio.startReceive();
+    if (st == RADIOLIB_ERR_NONE) { s_state = State::RX; return true; }
+    ++s_rxErrors;
+    s_state  = State::IDLE;
+    s_tRetry = millis();
+    Serial.printf("[t=%8lu ms] RADIO: no pudo ponerse a escuchar (codigo %d),"
+                  " se reintenta en 2 s\n", (unsigned long)millis(), st);
+    return false;
+  }
+
+  uint16_t rxErrors() { return s_rxErrors; }
+
   bool begin() {
     g_spi.begin(PIN_LORA_SCK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_LORA_NSS);
 
@@ -399,14 +487,7 @@ namespace radio {
      * cosas. Con una bandera única, loop() mira en qué estado estaba y ya. */
     g_radio.setDio1Action(onDio1);
 
-    const int rx = g_radio.startReceive();
-    if (rx != RADIOLIB_ERR_NONE) {
-      Serial.printf("[t=%8lu ms] RADIO: no pudo ponerse a escuchar (codigo %d)\n",
-                    (unsigned long)millis(), rx);
-      return false;
-    }
-    s_state = State::RX;
-    return true;
+    return listen();
   }
 
   bool busy() { return s_state == State::TX; }
@@ -419,8 +500,7 @@ namespace radio {
     if (st != RADIOLIB_ERR_NONE) {
       Serial.printf("[t=%8lu ms] RADIO: startTransmit fallo (codigo %d)\n",
                     (unsigned long)millis(), st);
-      g_radio.startReceive();
-      s_state = State::RX;
+      listen();
       return false;
     }
     s_state   = State::TX;
@@ -433,40 +513,49 @@ namespace radio {
   /* Devuelve true si ha llegado una trama; deja los bytes en `buf`. */
   bool poll(uint8_t* buf, size_t cap, size_t* outLen, float* rssi, float* snr,
             uint32_t now) {
+    // La radio se quedó sin poder escuchar: se reintenta cada 2 s.
+    if (g_radioUp && s_state == State::IDLE && (now - s_tRetry) >= 2000) {
+      s_tRetry = now;
+      if (listen()) trace("RADIO: vuelve a escuchar");
+    }
+
     /* Seguro por si se pierde la interrupción de fin de transmisión: sin esto
      * la radio se quedaría muda para siempre. Un paquete a SF12 no pasa de
      * ~2 s en el aire, así que 5 s es de sobra. */
     if (s_state == State::TX && (now - s_txStart) > 5000) {
       trace("RADIO: la transmision no dio senal de vida; se vuelve a escuchar");
       g_radio.finishTransmit();
-      g_radio.startReceive();
-      s_state = State::RX;
+      listen();
+      /* Se limpia la bandera: si la interrupción llegase justo después del
+       * rescate, la vuelta siguiente la tomaría por una recepción estando ya
+       * en RX y contaría una trama mala fantasma. */
+      s_dioFired = false;
     }
 
-    if (!s_dioFired) return false;
-    s_dioFired = false;
+    /* Leer y borrar de un golpe: si la interrupción cayera entre la lectura y
+     * el borrado, ese aviso se perdería. */
+    if (!__atomic_exchange_n(&s_dioFired, false, __ATOMIC_SEQ_CST)) return false;
 
     if (s_state == State::TX) {
       g_radio.finishTransmit();
-      g_radio.startReceive();
-      s_state = State::RX;
+      listen();
       return false;
     }
 
-    const int len = g_radio.getPacketLength();
-    if (len <= 0 || (size_t)len > cap) {
+    const size_t len = g_radio.getPacketLength();
+    if (len == 0 || len > cap) {
       ++g_rxBad;
-      g_radio.startReceive();
+      listen();
       return false;
     }
 
     const int st = g_radio.readData(buf, len);
     *rssi = g_radio.getRSSI();
     *snr  = g_radio.getSNR();
-    g_radio.startReceive();
+    listen();
 
     if (st != RADIOLIB_ERR_NONE) { ++g_rxBad; return false; }
-    *outLen = (size_t)len;
+    *outLen = len;
     led::pulse(30);
     return true;
   }
@@ -500,11 +589,63 @@ static bool sendFrame(link::Type type, uint8_t aux0 = 0, uint8_t aux1 = 0) {
   if (!radio::send(buf, n)) return false;
 
   ++s_seq;   // sólo avanza si de verdad salió: así el otro lado no ve huecos
+  seqTick();
   Serial.printf("[t=%8lu ms] >>> TX  %-6s seq=%u aux0=%u flags=0x%02X\n",
                 (unsigned long)millis(), link::typeName(type),
                 (unsigned)f.seq, (unsigned)aux0, (unsigned)f.flags);
   return true;
 }
+
+/* ==========================================================================
+ *  8-bis. BATERÍA (opcional)
+ * --------------------------------------------------------------------------
+ *  En la Heltec V3 el divisor de la batería va a GPIO1 y sólo se conecta
+ *  cuando ADC_Ctrl (GPIO37) está a nivel BAJO. Sin cablear (-1) se anuncia
+ *  "desconocida" y el buscador no enseña ningún porcentaje inventado.
+ * ==========================================================================*/
+namespace battery {
+
+  static const float    DIVIDER   = 4.9f;   // divisor de fábrica de la V3
+  static const float    FULL_V    = 4.15f;
+  static const float    EMPTY_V   = 3.30f;
+  static const uint8_t  LOW_PCT   = 20;
+  static float    s_volts = 0.0f;
+  static bool     s_has   = false;
+
+  void begin() {
+    if (PIN_VBAT < 0) return;
+    analogReadResolution(12);
+    analogSetPinAttenuation(PIN_VBAT, ADC_11db);
+    pinMode(PIN_VBAT_CTRL_CFG, OUTPUT);
+    digitalWrite(PIN_VBAT_CTRL_CFG, HIGH);   // divisor desconectado en reposo
+  }
+
+  void poll(uint32_t now) {
+    if (PIN_VBAT < 0) return;
+    static uint32_t tLast = 0;
+    if (s_has && (now - tLast) < 30000) return;
+    tLast = now;
+
+    digitalWrite(PIN_VBAT_CTRL_CFG, LOW);    // conecta el divisor
+    uint32_t acc = 0;
+    for (int i = 0; i < 8; ++i) acc += analogReadMilliVolts(PIN_VBAT);
+    digitalWrite(PIN_VBAT_CTRL_CFG, HIGH);   // y lo vuelve a soltar
+
+    s_volts = (acc / 8.0f) * DIVIDER / 1000.0f;
+    s_has   = true;
+
+    float p = (s_volts - EMPTY_V) / (FULL_V - EMPTY_V) * 100.0f;
+    if (p < 0.0f)   p = 0.0f;
+    if (p > 100.0f) p = 100.0f;
+    g_battery = (uint8_t)(p + 0.5f);
+    if (g_battery <= LOW_PCT) g_state_flags |= link::Flag::LOW_BATTERY;
+    else g_state_flags = (uint8_t)(g_state_flags & ~link::Flag::LOW_BATTERY);
+  }
+
+  bool  has()   { return s_has; }
+  float volts() { return s_volts; }
+
+} // namespace battery
 
 /* ==========================================================================
  *  9. GPS (opcional, el mismo lib/nmea de la DevKit)
@@ -522,6 +663,13 @@ static bool sendFrame(link::Type type, uint8_t aux0 = 0, uint8_t aux1 = 0) {
 namespace gps {
 
   static nmea::Parser s_parser;
+  static uint32_t     s_tFix = 0;     // millis() del último fix válido
+  static bool         s_has  = false;
+
+  /* Una posición de hace media hora no es "la posición": si el GPS pierde el
+   * fix hay que dejar de decir que lo tenemos, o el buscador enseñaría la
+   * última posición conocida como si fuera de ahora mismo. */
+  static const uint32_t FIX_VALIDO_MS = 120000;
 
   void begin() {
 #if GPS_UART_ENABLED
@@ -538,6 +686,18 @@ namespace gps {
     g_lat1e7 = link::degToFixed(f.lat);
     g_lon1e7 = link::degToFixed(f.lon);
     g_state_flags |= link::Flag::HAS_FIX;
+    s_tFix = millis();
+    s_has  = true;
+  }
+
+  /* Caduca el fix si hace demasiado que no llega uno nuevo. */
+  void expire(uint32_t now) {
+    if (!s_has) return;
+    if ((now - s_tFix) > FIX_VALIDO_MS) {
+      s_has = false;
+      g_state_flags = (uint8_t)(g_state_flags & ~link::Flag::HAS_FIX);
+      trace("GPS: el fix ha caducado; se deja de anunciar posicion");
+    }
   }
 
   void poll() {
@@ -581,6 +741,7 @@ static uint32_t g_beaconEveryMs = BEACON_SLOW_MS;
 static uint32_t g_tLastBeacon   = 0;
 
 static bool     g_alertPending  = false;   // esperando ACK
+static uint16_t g_alertSeq      = 0;       // seq del último envío, para casar el ACK
 static uint8_t  g_alertCode     = 0;       // 1 = corta, 2 = prolongada
 static uint8_t  g_alertTries    = 0;
 static uint32_t g_tAlertSent    = 0;
@@ -598,12 +759,13 @@ static void setFind(bool on) {
   if (g_findActive == on) return;
   g_findActive = on;
   if (on) {
-    snd::play(buzzer::PATTERN_FIND, /*force=*/true);
+    // Fondo, no evento: una alerta puede interrumpirlo y luego vuelve solo.
+    g_buzzer.setBackground(&buzzer::PATTERN_FIND);
     led::blink(300);
     g_state_flags |= link::Flag::FIND_ACTIVE;
     trace("FIND: el buscador me esta buscando -> pitando");
   } else {
-    snd::stopIf(buzzer::PATTERN_FIND);
+    snd::stopIf(buzzer::PATTERN_FIND);   // stopIf también quita el fondo
     led::blink(0);
     g_state_flags = (uint8_t)(g_state_flags & ~link::Flag::FIND_ACTIVE);
     trace("FIND: encontrado, dejo de pitar");
@@ -689,6 +851,7 @@ static void tagRadio(uint32_t now) {
                        : "ALERTA: sin respuesta del buscador tras todos los reintentos");
         snd::play(buzzer::PATTERN_LINK_LOST);
       } else if (sendFrame(link::Type::ALERT, g_alertCode)) {
+        g_alertSeq = (uint16_t)(s_seq - 1);   // sendFrame ya lo incrementó
         ++g_alertTries;
         g_tAlertSent = now;
         Serial.printf("[t=%8lu ms] ALERTA: envio %u de %u, esperando ACK\n",
@@ -712,12 +875,23 @@ static void tagOnFrame(const link::Frame& f, float rssi, float snr) {
 
   switch (f.type) {
     case link::Type::ACK:
-      if (g_alertPending) {
+      /* Se comprueba que el ACK confirma ESTE envío y no uno anterior: el
+       * buscador devuelve en aux1 el byte bajo del seq y en aux0 el código.
+       * Sin esta comprobación, un ACK retrasado de la alerta anterior daría
+       * por confirmada una cancelación que el buscador nunca recibió, y la
+       * alarma se quedaría sonando por algo ya anulado. */
+      if (g_alertPending &&
+          f.aux1 == (uint8_t)(g_alertSeq & 0xFF) && f.aux0 == g_alertCode) {
         const bool eraCancelacion = (g_alertCode == 0);
         g_alertPending = false;
         trace(eraCancelacion ? "CANCELACION CONFIRMADA por el buscador (ACK recibido)"
                              : "ALERTA CONFIRMADA por el buscador (ACK recibido)");
         snd::play(buzzer::PATTERN_CONFIRMED);
+      } else if (g_alertPending) {
+        Serial.printf("[t=%8lu ms] ACK ignorado: confirma otro envio"
+                      " (aux0=%u aux1=%u, esperaba aux0=%u aux1=%u)\n",
+                      (unsigned long)millis(), (unsigned)f.aux0, (unsigned)f.aux1,
+                      (unsigned)g_alertCode, (unsigned)(g_alertSeq & 0xFF));
       }
       break;
 
@@ -759,7 +933,10 @@ static void tagOnFrame(const link::Frame& f, float rssi, float snr) {
  *  · Modo BÚSQUEDA: pita cada vez más seguido según te acercas, igual que el
  *    "caliente/frío" del AirTag, y le dice al llavero que pite él también.
  * ------------------------------------------------------------------------*/
-static ranging::Estimator g_est;
+/* El plazo de silencio se ata a la cadencia de la baliza: con un valor fijo
+ * más corto que dos balizas, perder UNA trama ya diría "SIN SEÑAL". */
+static ranging::Estimator g_est(ranging::Config(-55.0f, -85.0f, -110.0f, -45.0f,
+                                                2.7f, 0.35f, BEACON_SLOW_MS * 3));
 static bool     g_findMode    = false;
 static uint32_t g_tLastBeep   = 0;
 static bool     g_alarmOn     = false;   // hay una alerta del llavero sin atender
@@ -852,6 +1029,7 @@ static void finderOnFrame(const link::Frame& f, float rssi, float snr) {
     case link::Type::ALERT:
       if (f.aux0 == 0) {
         g_alarmOn = false;
+        g_buzzer.setBackground(nullptr);
         snd::stop();
         led::blink(0);
         trace("*** EL LLAVERO ANULO LA ALERTA ***");
@@ -860,7 +1038,8 @@ static void finderOnFrame(const link::Frame& f, float rssi, float snr) {
         Serial.printf("\n*** ALERTA %s DEL LLAVERO 0x%04X ***\n",
                       f.aux0 == 2 ? "PROLONGADA (ALERT:2)" : "CORTA (ALERT:1)",
                       (unsigned)f.src);
-        snd::play(buzzer::PATTERN_BEACON, /*force=*/true);
+        g_buzzer.setBackground(&buzzer::PATTERN_BEACON);  // suena hasta que se atienda
+        snd::play(buzzer::PATTERN_ALERT_LONG, /*force=*/true);
         led::blink(200);
       }
       sendFrame(link::Type::ACK, f.aux0, (uint8_t)(f.seq & 0xFF));   // confirmar SIEMPRE
@@ -885,7 +1064,7 @@ static void finderBeeps(uint32_t now) {
   led::blink((uint16_t)period);
   if ((now - g_tLastBeep) >= period) {
     g_tLastBeep = now;
-    snd::play(buzzer::PATTERN_BOOT, /*force=*/true);   // dos notas cortas
+    snd::play(buzzer::PATTERN_PING, /*force=*/true);   // pitido corto
   }
 }
 #endif  // IS_FINDER
@@ -931,6 +1110,7 @@ static void handleCommand(const char* raw) {
     const bool habiaAlarma = g_alarmOn;
     setFindMode(false);
     g_alarmOn = false;
+    g_buzzer.setBackground(nullptr);
     snd::stop();
     led::blink(0);
     if (habiaAlarma && !g_findMode) finderSendCmd(link::Cmd::FAST_OFF);
@@ -1027,6 +1207,10 @@ static void printStatus() {
   } else {
     Serial.println("  Todavia no se ha oido nada del otro lado");
   }
+  if (PIN_VBAT >= 0 && battery::has()) {
+    Serial.printf ("  Bateria propia       : %.2f V (~%u %%)\n",
+                   (double)battery::volts(), (unsigned)g_battery);
+  }
   const nmea::Fix& f = gps::fix();
   if (f.valid) {
     Serial.printf ("  Posicion propia      : %.6f, %.6f\n", f.lat, f.lon);
@@ -1084,6 +1268,7 @@ void setup() {
 #endif
   led::begin();
   snd::begin();
+  battery::begin();
 
   g_key = link::keyFromString(GEO_LINK_KEY);
   g_guard.reset();
@@ -1091,6 +1276,9 @@ void setup() {
     s_seqMagic = SEQ_MAGIC;
     s_seq      = 0;
   }
+  seqBegin();
+  Serial.printf("[t=%8lu ms] ENLACE: contador de secuencia en %u\n",
+                (unsigned long)millis(), (unsigned)s_seq);
 
   printBanner();
   gps::begin();
@@ -1117,6 +1305,8 @@ void loop() {
 
   serialPoll();
   gps::poll();
+  gps::expire(now);
+  battery::poll(now);
 
   /* --- recepción -------------------------------------------------------- */
   uint8_t buf[link::FRAME_SIZE + 8];
@@ -1144,6 +1334,20 @@ void loop() {
         Serial.printf("[t=%8lu ms] El emisor 0x%04X parece haberse reiniciado:"
                       " se resincroniza el contador\n",
                       (unsigned long)now, (unsigned)f.src);
+        // Y se ATIENDE esta misma trama: si no, la orden que destapó el
+        // problema se perdería también y habría que repetirla otra vez más.
+        if (g_guard.accept(f.src, f.seq)) {
+          --g_rxBad;
+          ++g_rxOk;
+          g_tLastHeard   = now;
+          g_everHeard    = true;
+          g_linkLostSaid = false;
+#if IS_TAG
+          tagOnFrame(f, rssi, snr);
+#else
+          finderOnFrame(f, rssi, snr);
+#endif
+        }
       }
     } else {
       ++g_rxOk;
@@ -1188,6 +1392,7 @@ void loop() {
         // Mismo criterio que el comando STOP: silenciar la alarma es decirle
         // al llavero que ya está atendida.
         g_alarmOn = false;
+        g_buzzer.setBackground(nullptr);
         snd::stop();
         led::blink(0);
         finderSendCmd(link::Cmd::FAST_OFF);

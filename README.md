@@ -46,8 +46,8 @@ escrito y probado en el PC, a falta de placas.**
 - **Enlace LoRa punto a punto** entre dos Heltec V3, estilo AirTag: un llavero
   que avisa y un buscador que dice "caliente/frío". Todo el detalle en
   **`LORA-P2P.md`**. Es el archivo que hay que leer antes de tocar las Heltec.
-- **47 pruebas nuevas** (protocolo, cercanía y zumbador). Con las 34 que ya
-  había son **81, todas pasando en el PC** en un par de segundos.
+- **53 pruebas nuevas** (protocolo, cercanía y zumbador). Con las 34 que ya
+  había son **87, todas pasando en el PC** en un par de segundos.
 - **`tools/comprobar-sintaxis.sh`**: pasa el `g++` del sistema por los dos
   firmwares con cabeceras de mentira. No sustituye a compilar de verdad, pero
   caza erratas en segundos y **sin descargar el toolchain de ESP32**.
@@ -77,7 +77,7 @@ dejar montada una red de seguridad que no dependa de tener la placa:
   milisegundo: el umbral de los 3 s, rebotes al pulsar y al soltar, cancelar
   desde pulsación corta y larga, la ventana que expira, arrancar con el botón
   pulsado y hasta el desbordamiento de `millis()` a los 49,7 días. Con las 16
-  del GPS son **34 pruebas, todas pasando en el PC** (hoy son 81):
+  del GPS son **34 pruebas, todas pasando en el PC** (hoy son 87):
   ```bash
   pio test -e native
   ```
@@ -340,7 +340,7 @@ ls -l /dev/serial/by-id/  ;  dmesg | tail -20
 |---|---|---|
 | **CP2102 / CP2104** (Silicon Labs) | `/dev/ttyUSB0` | `cp210x` |
 | **CH340 / CH9102** (WCH) | `/dev/ttyUSB0` | `ch341` / `ch34x` |
-| **ESP32-S3 USB nativo** (la Heltec V3) | `/dev/ttyACM0` | `cdc_acm` |
+| **ESP32-S3 por USB nativo** (NO es el caso de la Heltec V3, que lleva CP2102) | `/dev/ttyACM0` | `cdc_acm` |
 
 La DevKit V1 casi siempre es CP2102 o CH340 → **`/dev/ttyUSB0`**.
 PlatformIO autodetecta el puerto; si tuvieras varios, fija
@@ -511,7 +511,7 @@ que el botón de pánico se comporta **exactamente igual** en las dos placas.
 |---|---|
 | **Pines** | Todos salen de `platformio.ini` con `-D`. El LED integrado de la V3 es `GPIO35`; el botón PRG, `GPIO0`. Los de la radio (NSS 8, SCK 9, MOSI 10, MISO 11, RST 12, BUSY 13, DIO1 14) van soldados en la placa. |
 | **PWM del LED** | En la DevKit se usa `analogWrite()`, portable entre arduino-esp32 2.x y 3.x. El zumbador sí usa LEDC directamente, con `#if ESP_ARDUINO_VERSION_MAJOR >= 3` para las dos firmas de la API. |
-| **USB / puerto serie** | El S3 usa USB nativo (CDC): los entornos `heltec_*` ya añaden `-D ARDUINO_USB_MODE=1 -D ARDUINO_USB_CDC_ON_BOOT=1`. El puerto será **`/dev/ttyACM0`**. |
+| **USB / puerto serie** | El USB-C de la Heltec V3 **no** es el USB nativo del S3: va a un puente **CP2102** sobre UART0, así que el puerto es **`/dev/ttyUSB0`** y los entornos `heltec_*` **no** llevan `ARDUINO_USB_CDC_ON_BOOT` (con ese flag `Serial` se iría al USB-JTAG interno, que en esta placa no está cableado, y no habría monitor serie). |
 | **Radio** | `RadioLib` con el `SX1262`, en `src/lora/main_lora.cpp`. Transmisión **no bloqueante** (interrupción de DIO1), como todo lo demás del proyecto. |
 
 ### Cosas a tener en cuenta con las Heltec
@@ -645,12 +645,12 @@ Expofisica/
 │   ├── buzzer/              # patrones del zumbador piezo
 │   ├── link/                # protocolo GEO-LINK: trama, firma, antirrepetición
 │   └── ranging/             # RSSI -> zona -> distancia -> cadencia de pitido
-├── test/                    # 81 pruebas automáticas (pio test -e native)
+├── test/                    # 87 pruebas automáticas (pio test -e native)
 │   ├── test_nmea/     (16)
 │   ├── test_panic/    (18)
-│   ├── test_link/     (20)
-│   ├── test_ranging/  (14)
-│   └── test_buzzer/   (13)
+│   ├── test_link/     (22)
+│   ├── test_ranging/  (15)
+│   └── test_buzzer/   (16)
 ├── tools/
 │   ├── comprobar-sintaxis.sh   # g++ sobre los dos firmwares, sin toolchain ESP32
 │   └── stubs/                  # cabeceras de mentira SÓLO para ese script

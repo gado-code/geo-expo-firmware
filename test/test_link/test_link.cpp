@@ -237,6 +237,28 @@ static void test_guardia_sobrevive_al_desbordamiento(void) {
   TEST_ASSERT_FALSE(g.accept(9, 65535));  // eso sí es ir hacia atrás
 }
 
+static void test_guardia_rechaza_un_salto_disparatado(void) {
+  /* Sin tope de salto, la comparacion circular considera "mas nuevo" a todo
+   * lo que este dentro de media vuelta del contador: en cuanto el emisor pasa
+   * de 32768 tramas, las grabaciones VIEJAS volverian a colar. */
+  link::ReplayGuard g;
+  g.reset();
+  TEST_ASSERT_TRUE(g.accept(3, 40000));
+  TEST_ASSERT_FALSE(g.accept(3, 1));                       // grabacion antigua
+  TEST_ASSERT_FALSE(g.accept(3, 40000 + link::ReplayGuard::MAX_JUMP + 1));
+  TEST_ASSERT_TRUE(g.accept(3, 40000 + link::ReplayGuard::MAX_JUMP));  // hueco normal
+}
+
+static void test_guardia_admite_un_hueco_razonable(void) {
+  // Una placa fuera de alcance un rato vuelve con el contador mas alto y debe
+  // seguir hablando sin tener que reiniciar nada.
+  link::ReplayGuard g;
+  g.reset();
+  TEST_ASSERT_TRUE(g.accept(4, 10));
+  TEST_ASSERT_TRUE(g.accept(4, 300));      // se perdieron 289 tramas: normal
+  TEST_ASSERT_FALSE(g.accept(4, 299));     // pero hacia atras sigue sin colar
+}
+
 static void test_guardia_olvida_a_quien_se_le_pide(void) {
   link::ReplayGuard g;
   g.reset();
@@ -289,6 +311,8 @@ int main(int, char**) {
   RUN_TEST(test_guardia_acepta_lo_nuevo_y_rechaza_lo_repetido);
   RUN_TEST(test_guardia_separa_emisores);
   RUN_TEST(test_guardia_sobrevive_al_desbordamiento);
+  RUN_TEST(test_guardia_rechaza_un_salto_disparatado);
+  RUN_TEST(test_guardia_admite_un_hueco_razonable);
   RUN_TEST(test_guardia_olvida_a_quien_se_le_pide);
   RUN_TEST(test_orden_falsificada_no_apaga_la_alerta);
   return UNITY_END();

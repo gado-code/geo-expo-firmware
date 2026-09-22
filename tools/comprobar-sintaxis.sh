@@ -46,9 +46,12 @@ comprobar "boton cableado al reves (BUTTON_ACTIVE_HIGH)" src/main.cpp \
     -D PIN_BUTTON_CFG=5 -D BUTTON_ACTIVE_HIGH=1
 
 echo "Comprobando el firmware LoRa (src/lora/main_lora.cpp):"
-comprobar "heltec_tag (llavero)" src/lora/main_lora.cpp -D LORA_ROLE=1 -D PIN_BUZZER_CFG=25
-comprobar "heltec_finder (buscador)" src/lora/main_lora.cpp -D LORA_ROLE=2 -D PIN_BUZZER_CFG=25
-comprobar "heltec_tag con GPS cableado" src/lora/main_lora.cpp -D LORA_ROLE=1 -D GPS_UART_ENABLED=1
+# OJO: en la Heltec (ESP32-S3) el zumbador NO puede ir en GPIO25 -> ese pin no
+# existe en el S3. Aquí se usa GPIO6, que sí.
+comprobar "heltec_tag (llavero)" src/lora/main_lora.cpp -D LORA_ROLE=1 -D PIN_BUZZER_CFG=6
+comprobar "heltec_finder (buscador)" src/lora/main_lora.cpp -D LORA_ROLE=2 -D PIN_BUZZER_CFG=6
+comprobar "heltec_tag con GPS y bateria" src/lora/main_lora.cpp -D LORA_ROLE=1 \
+    -D GPS_UART_ENABLED=1 -D PIN_VBAT_CFG=1
 
 echo
 if [ "$fallos" -eq 0 ]; then

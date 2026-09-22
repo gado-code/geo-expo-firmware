@@ -286,6 +286,11 @@ namespace snd {
 
   void play(const buzzer::Pattern& p, bool force = false) { s_player.play(p, millis(), force); }
   void stopIf(const buzzer::Pattern& p)                   { s_player.stopIf(p); }
+
+  /* La baliza es un ESTADO, no un evento: se declara como patrón de fondo
+   * para que una alerta pueda interrumpirla (lo importante manda) y la baliza
+   * vuelva sola en cuanto la alerta termina de sonar. */
+  void background(const buzzer::Pattern* p)               { s_player.setBackground(p); }
   void stop()                                             { s_player.stop(); }
   void mute(bool on)                                      { s_player.mute(on); }
   bool muted()                                            { return s_player.muted(); }
@@ -464,6 +469,7 @@ static NimBLEServer*         g_server  = nullptr;
 static NimBLECharacteristic* g_txChar  = nullptr;
 static bool                  g_beaconActive = false;   // estado lógico de la baliza
 static bool                  g_bleUp        = false;   // BLE arrancó sin colgarse
+static bool                  g_bootJingle   = true;    // ¿suena la melodía de arranque?
 
 /* --------------------------------------------------------------------------
  *  ARRANQUE A PRUEBA DE FALLOS  (incidencia I12)
@@ -482,8 +488,12 @@ static bool                  g_bleUp        = false;   // BLE arrancó sin colga
  *  el log lo dice bien claro. Para volver a intentarlo: comando "BLE:RETRY"
  *  o quitar y poner la alimentación.
  * ------------------------------------------------------------------------*/
-RTC_NOINIT_ATTR static uint32_t s_bootMagic;
-RTC_NOINIT_ATTR static uint8_t  s_bleAttempts;
+/* `volatile` a propósito: el valor tiene que quedar ESCRITO en la memoria RTC
+ * antes de entrar en init(), porque quien lo lee es el arranque siguiente
+ * después de un reinicio del perro guardián. Hoy el compilador ya lo conserva
+ * (hay una llamada externa de por medio), pero así no depende de eso. */
+RTC_NOINIT_ATTR static volatile uint32_t s_bootMagic;
+RTC_NOINIT_ATTR static volatile uint8_t  s_bleAttempts;
 static const uint32_t BOOT_MAGIC       = 0x6EA71C03;   // "panic" con imaginación
 static const uint8_t  BLE_MAX_ATTEMPTS = 3;
 
@@ -658,14 +668,14 @@ static void handleCommand(const char* rawCmd) {
   if (strcmp(cmd, "BEACON:ON") == 0) {
     g_beaconActive = true;
     led::setBeacon(true);
-    snd::play(buzzer::PATTERN_BEACON);
+    snd::background(&buzzer::PATTERN_BEACON);
     trace(PIN_BUZZER >= 0
               ? "RX  BEACON:ON   -> baliza ACTIVADA  (LED a 2 Hz + zumbador)"
               : "RX  BEACON:ON   -> baliza ACTIVADA  (LED parpadeando a 2 Hz)");
   } else if (strcmp(cmd, "BEACON:OFF") == 0) {
     g_beaconActive = false;
     led::setBeacon(false);
-    snd::stopIf(buzzer::PATTERN_BEACON);
+    snd::stopIf(buzzer::PATTERN_BEACON);   // stopIf también quita el fondo
     trace("RX  BEACON:OFF  -> baliza DESACTIVADA");
   } else if (strncmp(cmd, "NMEA ", 5) == 0) {
     // Inyecta una trama a mano: permite probar el GPS sin tener el módulo.
@@ -945,7 +955,8 @@ void setup() {
                   " (incidencia I12).\n",
                   (unsigned long)millis(), (unsigned)s_bleAttempts);
     trace("BLE: el resto del aparato funciona igual. Escribe BLE:RETRY para reintentar.");
-    snd::play(buzzer::PATTERN_LINK_LOST);
+    snd::play(buzzer::PATTERN_LINK_LOST);   // aviso distinto del arranque normal
+    g_bootJingle = false;
   } else {
     ++s_bleAttempts;                    // se anota ANTES de entrar en init()
     bleBegin();
@@ -954,7 +965,10 @@ void setup() {
     trace("BLE: advertising iniciado como \"GEOEXPO-ALERT\"");
   }
 
-  snd::play(buzzer::PATTERN_BOOT);
+  /* La melodía de arranque sólo si todo fue bien: si no, taparía el aviso de
+   * "BLE desactivado" (los dos patrones son de prioridad UI y ganaría el
+   * último en sonar) y la placa parecería estar perfecta. */
+  if (g_bootJingle) snd::play(buzzer::PATTERN_BOOT);
   trace("Sistema listo. Estado inicial: IDLE");
 }
 

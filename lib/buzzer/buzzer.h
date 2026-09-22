@@ -50,12 +50,18 @@ struct Pattern {
 
 static const uint8_t REPEAT_FOREVER = 255;
 
-/* Prioridades: una alerta no se deja pisar por el "bip" de una tecla, y la
- * baliza/búsqueda no se deja pisar por nada. */
+/* Prioridades.
+ *
+ * MANDA LA ALERTA. Antes la baliza tenía la prioridad más alta, y eso hacía
+ * que con `BEACON:ON` puesto una pulsación del botón de pánico no sonara: el
+ * usuario se quedaba sin confirmación acústica de que su alerta había salido,
+ * que es justo lo contrario de lo que tiene que hacer este aparato. La baliza
+ * no se pierde por ello: se declara como PATRÓN DE FONDO (`setBackground`) y
+ * vuelve sola en cuanto la alerta termina de sonar. */
 namespace Prio {
   static const uint8_t UI     = 1;   // confirmaciones, arranque
-  static const uint8_t ALERT  = 2;   // ALERT:1 / ALERT:2 / CANCEL
-  static const uint8_t BEACON = 3;   // baliza y modo "encuéntrame"
+  static const uint8_t BEACON = 2;   // baliza y modo "encuéntrame"
+  static const uint8_t ALERT  = 3;   // ALERT:1 / ALERT:2 / CANCEL
 }
 
 /* --------------------------------------------------------------------------
@@ -69,6 +75,7 @@ extern const Pattern PATTERN_CONFIRMED;    // ventana expirada: alerta confirmad
 extern const Pattern PATTERN_BEACON;       // baliza: sirena lenta, sin fin
 extern const Pattern PATTERN_FIND;         // "estoy aquí": chirrido agudo, sin fin
 extern const Pattern PATTERN_LINK_LOST;    // el enlace LoRa se cayó
+extern const Pattern PATTERN_PING;         // pitido corto del "caliente/frío"
 
 /* --------------------------------------------------------------------------
  *  Qué debe sonar ahora.
@@ -92,6 +99,13 @@ class Player {
    * cargarse un pitido de alerta que haya entrado justo después). */
   void stopIf(const Pattern& p);
 
+  /* Patrón de FONDO: lo que debe sonar cuando no hay nada más sonando.
+   * Sirve para la baliza y para el modo "encuéntrame", que son estados y no
+   * eventos: una alerta los interrumpe y al acabar vuelven solos.
+   * `setBackground(nullptr)` los quita. */
+  void setBackground(const Pattern* p);
+  const Pattern* background() const { return m_bg; }
+
   /* Una vuelta de loop(). Devuelve la frecuencia que toca ahora. */
   Out update(uint32_t now);
 
@@ -106,6 +120,7 @@ class Player {
  private:
   uint16_t currentFreq() const;
 
+  const Pattern* m_bg   = nullptr;   // patrón de fondo (baliza / búsqueda)
   const Step* m_steps   = nullptr;
   uint8_t     m_count   = 0;
   uint8_t     m_index   = 0;
