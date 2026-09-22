@@ -48,30 +48,92 @@
 
 #include "nmea.h"           // lib/nmea:  parseo de tramas GPS   (probado en test/)
 #include "panic.h"          // lib/panic: FSM del boton de panico (probada en test/)
+#include "buzzer.h"         // lib/buzzer: patrones del zumbador   (probada en test/)
 
 /* ==========================================================================
  *  1. CONFIGURACIÓN DE PINES
  * --------------------------------------------------------------------------
- *  Se selecciona con -D BOARD_HELTEC_V3 desde platformio.ini.
- *  La tabla deja anotado el pin equivalente en la Heltec V3 por si algún día
- *  se hace el salto; hoy NO es el camino del proyecto (ver cabecera):
+ *  TODOS los pines se pueden cambiar desde platformio.ini con -D, sin tocar
+ *  este archivo. Los valores de aquí son los que usa el entorno de siempre
+ *  (`devkit_v1`, sólo periféricos integrados); el entorno `devkit_llavero`
+ *  los sobreescribe con los del llavero cableado de verdad.
  *
- *     Función         | DevKit V1 (WROOM-32) | Heltec WiFi LoRa 32 V3 (S3)
- *     ----------------|----------------------|---------------------------
- *     LED integrado   | GPIO2                | GPIO35  (LED blanco)
- *     Botón integrado | GPIO0  (BOOT)        | GPIO0   (botón PRG / USER)
- *     LED activo en   | ALTO                 | ALTO
+ *     Función        | integrado (devkit_v1) | llavero (devkit_llavero) | Heltec V3
+ *     ---------------|-----------------------|--------------------------|----------
+ *     LED            | GPIO2  (LED azul)     | GPIO2                    | GPIO35
+ *     Botón          | GPIO0  (BOOT)         | GPIO4  (a masa)          | GPIO0
+ *     Zumbador piezo | —                     | GPIO25                   | GPIO25
+ *     Medida batería | —                     | GPIO34 (divisor 2:1)     | GPIO37
+ *
+ *  ⚠️ El botón definitivo NO debe ir en GPIO0, 2, 12 ni 15: son pines de
+ *  arranque (*strapping*) y un botón pulsado en el momento del reset puede
+ *  dejar la placa sin arrancar. Libres y seguros: GPIO4, 5, 18, 19, 21, 22,
+ *  23, 25, 26, 27. GPIO34-39 son SÓLO entrada y no tienen pull-up interno,
+ *  así que no sirven para el botón (sí para medir la batería).
  * ==========================================================================*/
 #if defined(BOARD_HELTEC_V3)
-  static const int   PIN_LED         = 35;    // Heltec V3: LED blanco integrado
-  static const int   PIN_BUTTON      = 0;     // Heltec V3: botón PRG (GPIO0)
-  static const bool  LED_ACTIVE_HIGH = true;
-  static const char* BOARD_LABEL     = "Heltec WiFi LoRa 32 V3 (ESP32-S3)";
+  #ifndef PIN_LED_CFG
+    #define PIN_LED_CFG 35              // Heltec V3: LED blanco integrado
+  #endif
+  #ifndef PIN_BUTTON_CFG
+    #define PIN_BUTTON_CFG 0            // Heltec V3: botón PRG (GPIO0)
+  #endif
+  static const char* BOARD_LABEL = "Heltec WiFi LoRa 32 V3 (ESP32-S3)";
 #else
-  static const int   PIN_LED         = 2;     // DevKit V1: LED azul  -> Heltec V3 = GPIO35
-  static const int   PIN_BUTTON      = 0;     // DevKit V1: BOOT      -> Heltec V3 = GPIO0
-  static const bool  LED_ACTIVE_HIGH = true;  //                      -> Heltec V3 = true
-  static const char* BOARD_LABEL     = "ESP32 DevKit V1 (ESP32-WROOM-32)";
+  #ifndef PIN_LED_CFG
+    #define PIN_LED_CFG 2               // DevKit V1: LED azul integrado
+  #endif
+  #ifndef PIN_BUTTON_CFG
+    #define PIN_BUTTON_CFG 0            // DevKit V1: BOOT (sólo para probar sin cablear)
+  #endif
+  static const char* BOARD_LABEL = "ESP32 DevKit V1 (ESP32-WROOM-32)";
+#endif
+
+/* Zumbador piezo PASIVO. -1 = no hay zumbador (se sigue simulando con el LED).
+ * Cableado: una pata al pin, la otra a GND. Si el piezo pide más corriente de
+ * la que da un GPIO (40 mA máx.), va con un transistor NPN y su resistencia
+ * de base; los piezo pequeños de 3 V tiran directos sin problema. */
+#ifndef PIN_BUZZER_CFG
+  #define PIN_BUZZER_CFG -1
+#endif
+
+/* Medida de batería por ADC. -1 = no se mide (se informa "desconocida").
+ * Cableado: divisor de dos resistencias iguales (100 k) entre V+ de la
+ * batería y GND, y el punto medio al pin. Así una LiPo de 4,2 V llega al
+ * ADC como 2,1 V, dentro de lo que el ESP32 aguanta. */
+#ifndef PIN_VBAT_CFG
+  #define PIN_VBAT_CFG -1
+#endif
+
+/* El botón normal va a masa con pull-up interno (LOW = pulsado). Si se cablea
+ * al revés (a 3V3 con pull-down externo), compilar con -D BUTTON_ACTIVE_HIGH=1. */
+#ifndef BUTTON_ACTIVE_HIGH
+  #define BUTTON_ACTIVE_HIGH 0
+#endif
+
+/* Algunas placas clónicas llevan el LED invertido. */
+#ifndef LED_ACTIVE_HIGH_CFG
+  #define LED_ACTIVE_HIGH_CFG 1
+#endif
+
+static const int  PIN_LED         = PIN_LED_CFG;
+static const int  PIN_BUTTON      = PIN_BUTTON_CFG;
+static const int  PIN_BUZZER      = PIN_BUZZER_CFG;
+static const int  PIN_VBAT        = PIN_VBAT_CFG;
+static const bool LED_ACTIVE_HIGH = (LED_ACTIVE_HIGH_CFG != 0);
+
+/* Comprobaciones que saltan al COMPILAR, no el día de la expo. */
+#if PIN_BUTTON_CFG == PIN_LED_CFG
+  #error "El boton y el LED no pueden compartir pin (revisa PIN_BUTTON_CFG / PIN_LED_CFG)"
+#endif
+#if (PIN_BUZZER_CFG >= 0) && (PIN_BUZZER_CFG == PIN_BUTTON_CFG || PIN_BUZZER_CFG == PIN_LED_CFG)
+  #error "El zumbador no puede compartir pin con el boton ni con el LED"
+#endif
+#if (PIN_BUZZER_CFG >= 0) && (PIN_BUZZER_CFG >= 34)
+  #error "GPIO34-39 son SOLO entrada: no pueden mover un zumbador"
+#endif
+#if (PIN_BUTTON_CFG >= 34) && (BUTTON_ACTIVE_HIGH == 0)
+  #error "GPIO34-39 no tienen pull-up interno: ese pin no vale para el boton a masa"
 #endif
 
 /* ==========================================================================
@@ -172,6 +234,125 @@ namespace led {
 } // namespace led
 
 /* ==========================================================================
+ *  4-bis. ZUMBADOR PIEZO  (lib/buzzer + LEDC)
+ * --------------------------------------------------------------------------
+ *  lib/buzzer decide QUÉ frecuencia toca en cada instante (y eso se prueba en
+ *  el PC); aquí sólo se saca por el pin. Se usa LEDC directamente en vez de
+ *  tone() porque tone() en arduino-esp32 se lleva un canal LEDC fijo y un
+ *  temporizador, y ya hay otro canal ocupado por el analogWrite() del LED.
+ *
+ *  Si PIN_BUZZER es -1 (no hay zumbador cableado) todo esto se queda en nada:
+ *  el secuenciador sigue corriendo —para que las trazas sean las mismas— pero
+ *  no se toca ningún pin.
+ * ==========================================================================*/
+/* trace() se define más abajo (§6); aquí basta con declararla. */
+static void trace(const char* msg);
+
+namespace snd {
+
+  static buzzer::Player s_player;
+  static bool           s_ready = false;
+
+  /* Canal y temporizador LEDC propios, elegidos para no chocar con los que
+   * analogWrite() reparte solo (el core 2.x los asigna desde el más alto
+   * hacia abajo, así que el 0 es el que más tarda en tocarle). */
+  static const uint8_t  LEDC_CHANNEL = 0;
+  static const uint8_t  LEDC_BITS    = 10;      // resolución del duty
+  static const uint32_t LEDC_DUTY    = 512;     // 50 % = onda cuadrada
+
+  void begin() {
+    if (PIN_BUZZER < 0) { trace("BUZZER: no hay zumbador cableado (se simula con el LED)"); return; }
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcAttach(PIN_BUZZER, 2000, LEDC_BITS);          // API de arduino-esp32 3.x
+#else
+    ledcSetup(LEDC_CHANNEL, 2000, LEDC_BITS);         // API de arduino-esp32 2.x
+    ledcAttachPin(PIN_BUZZER, LEDC_CHANNEL);
+#endif
+    s_ready = true;
+    trace("BUZZER: listo");
+  }
+
+  static void output(uint16_t freqHz) {
+    if (!s_ready) return;
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    if (freqHz == 0) { ledcWrite(PIN_BUZZER, 0); return; }
+    ledcWriteTone(PIN_BUZZER, freqHz);
+#else
+    if (freqHz == 0) { ledcWrite(LEDC_CHANNEL, 0); return; }
+    ledcWriteTone(LEDC_CHANNEL, freqHz);
+    ledcWrite(LEDC_CHANNEL, LEDC_DUTY);
+#endif
+  }
+
+  void play(const buzzer::Pattern& p, bool force = false) { s_player.play(p, millis(), force); }
+  void stopIf(const buzzer::Pattern& p)                   { s_player.stopIf(p); }
+  void stop()                                             { s_player.stop(); }
+  void mute(bool on)                                      { s_player.mute(on); }
+  bool muted()                                            { return s_player.muted(); }
+
+  void update(uint32_t now) {
+    const buzzer::Out o = s_player.update(now);
+    if (o.changed) output(o.freqHz);
+  }
+
+} // namespace snd
+
+/* ==========================================================================
+ *  4-ter. BATERÍA  (opcional: sólo si PIN_VBAT está cableado)
+ * --------------------------------------------------------------------------
+ *  Un botón de pánico que se queda sin batería sin avisar no sirve de nada,
+ *  así que el firmware sabe leerla desde ya. Sin divisor cableado devuelve
+ *  "desconocida" y no molesta a nadie.
+ * ==========================================================================*/
+namespace battery {
+
+  /* Divisor 2:1 -> el ADC ve la mitad de la tensión real. */
+  static const float DIVIDER      = 2.0f;
+  static const float FULL_V       = 4.15f;   // LiPo cargada
+  static const float EMPTY_V      = 3.30f;   // por debajo, apagar
+  static const uint8_t LOW_PCT    = 20;      // umbral de aviso
+
+  static float s_volts = 0.0f;
+  static bool  s_has   = false;
+
+  void begin() {
+    if (PIN_VBAT < 0) return;
+    analogReadResolution(12);
+    // 11 dB = fondo de escala ~3,3 V, que es lo que necesita el divisor.
+    analogSetPinAttenuation(PIN_VBAT, ADC_11db);
+  }
+
+  void poll(uint32_t now) {
+    if (PIN_VBAT < 0) return;
+    static uint32_t tLast = 0;
+    if (s_has && (now - tLast) < 10000) return;    // una lectura cada 10 s sobra
+    tLast = now;
+
+    uint32_t acc = 0;
+    for (int i = 0; i < 8; ++i) acc += analogReadMilliVolts(PIN_VBAT);
+    s_volts = (acc / 8.0f) * DIVIDER / 1000.0f;
+    s_has   = true;
+  }
+
+  bool has()    { return s_has; }
+  float volts() { return s_volts; }
+
+  /* Porcentaje aproximado y lineal. Una LiPo no se descarga en línea recta,
+   * pero para "le queda media pila" es más que suficiente y es honesto
+   * llamarlo aproximado en vez de fingir una curva que no se ha medido. */
+  uint8_t percent() {
+    if (!s_has) return 255;
+    float p = (s_volts - EMPTY_V) / (FULL_V - EMPTY_V) * 100.0f;
+    if (p < 0.0f)   p = 0.0f;
+    if (p > 100.0f) p = 100.0f;
+    return (uint8_t)(p + 0.5f);
+  }
+
+  bool low() { return s_has && percent() <= LOW_PCT; }
+
+} // namespace battery
+
+/* ==========================================================================
  *  5. MÓDULO GPS  (lib/nmea)
  * --------------------------------------------------------------------------
  *  ESTADO: el receptor GPS todavía NO está conectado a la placa. Por eso el
@@ -192,9 +373,6 @@ namespace led {
  *  que es lo que espera el ESP32. No conectes TX del ESP32 al RX del GPS sin
  *  comprobar niveles: aquí no hace falta.
  * ==========================================================================*/
-/* trace() se define más abajo (§6); aquí basta con declararla. */
-static void trace(const char* msg);
-
 #ifndef GPS_UART_ENABLED
   #define GPS_UART_ENABLED 0        // 1 = leer de verdad del GPS por UART2
 #endif
@@ -285,6 +463,29 @@ static const size_t CMD_BUF_SIZE = 128;
 static NimBLEServer*         g_server  = nullptr;
 static NimBLECharacteristic* g_txChar  = nullptr;
 static bool                  g_beaconActive = false;   // estado lógico de la baliza
+static bool                  g_bleUp        = false;   // BLE arrancó sin colgarse
+
+/* --------------------------------------------------------------------------
+ *  ARRANQUE A PRUEBA DE FALLOS  (incidencia I12)
+ * --------------------------------------------------------------------------
+ *  La I12 es un cuelgue DENTRO de NimBLEDevice::init(), esperando un `sync`
+ *  del controlador de Bluetooth que a veces no llega; el perro guardián
+ *  reinicia la placa y el ciclo se repite: la placa queda en bucle y el botón
+ *  de pánico NO funciona. Eso es lo grave: no que falle el BLE, sino que se
+ *  lleve por delante el resto del aparato.
+ *
+ *  Arreglo: un contador en la memoria RTC (que sobrevive al reinicio del
+ *  perro guardián, pero no a quitar la corriente). Se incrementa ANTES de
+ *  entrar en init() y se pone a cero en cuanto init() vuelve. Si al arrancar
+ *  ya hay tres intentos fallidos seguidos, el firmware arranca SIN BLE: el
+ *  botón, el LED, el zumbador, el GPS y el monitor serie funcionan igual, y
+ *  el log lo dice bien claro. Para volver a intentarlo: comando "BLE:RETRY"
+ *  o quitar y poner la alimentación.
+ * ------------------------------------------------------------------------*/
+RTC_NOINIT_ATTR static uint32_t s_bootMagic;
+RTC_NOINIT_ATTR static uint8_t  s_bleAttempts;
+static const uint32_t BOOT_MAGIC       = 0x6EA71C03;   // "panic" con imaginación
+static const uint8_t  BLE_MAX_ATTEMPTS = 3;
 
 /* ¿Hay alguien escuchando?
  *
@@ -439,6 +640,7 @@ static void bleBegin() {
  *  8. PROCESAMIENTO DE COMANDOS RX  (BLE o serie)
  * ==========================================================================*/
 static void printHelp();
+static void printStatus();
 
 static void handleCommand(const char* rawCmd) {
   // Normaliza: quita CR/LF, pasa a mayúsculas, recorta espacios.
@@ -456,10 +658,14 @@ static void handleCommand(const char* rawCmd) {
   if (strcmp(cmd, "BEACON:ON") == 0) {
     g_beaconActive = true;
     led::setBeacon(true);
-    trace("RX  BEACON:ON   -> baliza ACTIVADA  (LED parpadeando a 2 Hz)");
+    snd::play(buzzer::PATTERN_BEACON);
+    trace(PIN_BUZZER >= 0
+              ? "RX  BEACON:ON   -> baliza ACTIVADA  (LED a 2 Hz + zumbador)"
+              : "RX  BEACON:ON   -> baliza ACTIVADA  (LED parpadeando a 2 Hz)");
   } else if (strcmp(cmd, "BEACON:OFF") == 0) {
     g_beaconActive = false;
     led::setBeacon(false);
+    snd::stopIf(buzzer::PATTERN_BEACON);
     trace("RX  BEACON:OFF  -> baliza DESACTIVADA");
   } else if (strncmp(cmd, "NMEA ", 5) == 0) {
     // Inyecta una trama a mano: permite probar el GPS sin tener el módulo.
@@ -472,6 +678,25 @@ static void handleCommand(const char* rawCmd) {
     gps::printStatus(now);
   } else if (strcmp(cmd, "POS") == 0 || strcmp(cmd, "GPS") == 0) {
     gps::printStatus(millis());
+  } else if (strcmp(cmd, "MUTE:ON") == 0) {
+    snd::mute(true);
+    trace("RX  MUTE:ON     -> zumbador SILENCIADO (el resto sigue igual)");
+  } else if (strcmp(cmd, "MUTE:OFF") == 0) {
+    snd::mute(false);
+    trace("RX  MUTE:OFF    -> zumbador ACTIVO");
+  } else if (strcmp(cmd, "BEEP") == 0) {
+    // Prueba de sonido: útil para comprobar el cableado del piezo sin
+    // tener que disparar una alerta de verdad delante de la gente.
+    snd::play(buzzer::PATTERN_BOOT, /*force=*/true);
+    trace("RX  BEEP        -> prueba de zumbador");
+  } else if (strcmp(cmd, "BAT") == 0 || strcmp(cmd, "STATUS") == 0) {
+    printStatus();
+  } else if (strcmp(cmd, "BLE:RETRY") == 0) {
+    // Borra el contador de la I12 y reinicia para volver a intentar el BLE.
+    s_bleAttempts = 0;
+    trace("RX  BLE:RETRY   -> contador de arranques fallidos a cero, reiniciando...");
+    Serial.flush();
+    ESP.restart();
   } else if (strcmp(cmd, "?") == 0 || strcmp(cmd, "HELP") == 0) {
     printHelp();
   } else {
@@ -543,10 +768,28 @@ static void serialPoll() {
  *  cambia es que ahora los bordes de temporización están cubiertos por
  *  pruebas en vez de por pulsaciones a ojo.
  * ==========================================================================*/
+/* Lectura del botón con la polaridad que toque. Por defecto va a masa con
+ * pull-up interno (LOW = pulsado); con -D BUTTON_ACTIVE_HIGH=1 se invierte. */
+static inline bool buttonPressed() {
+#if BUTTON_ACTIVE_HIGH
+  return digitalRead(PIN_BUTTON) == HIGH;
+#else
+  return digitalRead(PIN_BUTTON) == LOW;
+#endif
+}
+
+static void buttonBegin() {
+#if BUTTON_ACTIVE_HIGH
+  pinMode(PIN_BUTTON, INPUT_PULLDOWN);
+#else
+  pinMode(PIN_BUTTON, INPUT_PULLUP);
+#endif
+}
+
 static panic::Fsm g_fsm(panic::Config{DEBOUNCE_MS, LONG_PRESS_MS, CANCEL_WINDOW_MS});
 
 static void fsmUpdate(uint32_t now) {
-  const bool pressed = (digitalRead(PIN_BUTTON) == LOW);   // pull-up: LOW = pulsado
+  const bool pressed = buttonPressed();
   const panic::Step s = g_fsm.update(now, pressed);
 
   // (a) Lo que viaja por el contrato BLE: ALERT:1 / ALERT:2 / CANCEL.
@@ -558,20 +801,25 @@ static void fsmUpdate(uint32_t now) {
     case panic::Event::ALERT_SHORT:
       led::blink(1, 800, 0);              // un parpadeo largo
       led::setBreathing(true);
+      snd::play(buzzer::PATTERN_ALERT_SHORT);
       break;
     case panic::Event::ALERT_LONG:
       led::blink(2, 250, 200);            // dos parpadeos
       led::setBreathing(true);
+      snd::play(buzzer::PATTERN_ALERT_LONG);
       break;
     case panic::Event::CANCEL:
       led::blink(3, 90, 90);              // tres parpadeos rápidos
       led::setBreathing(false);
+      snd::play(buzzer::PATTERN_CANCEL);
       break;
     case panic::Event::CANCEL_ARMED:
       trace("CANCEL_WINDOW: botón liberado -> cancelación ARMADA");
       break;
     case panic::Event::WINDOW_EXPIRED:
       led::setBreathing(false);
+      // Dos pitidos secos: la alerta ya no se puede cancelar, va en serio.
+      snd::play(buzzer::PATTERN_CONFIRMED);
       break;
     default:
       break;                              // NONE y BOUNCE no pintan nada
@@ -593,13 +841,47 @@ static void fsmUpdate(uint32_t now) {
 static void printHelp() {
   Serial.println();
   Serial.println("  Comandos por el monitor serie (equivalen a un WRITE en RX):");
-  Serial.println("     BEACON:ON    activa la baliza (LED a 2 Hz)");
+  Serial.println("     BEACON:ON    activa la baliza (LED a 2 Hz + zumbador)");
   Serial.println("     BEACON:OFF   desactiva la baliza");
+  Serial.println("     MUTE:ON      silencia el zumbador (el LED y el BLE siguen)");
+  Serial.println("     MUTE:OFF     vuelve a dejar sonar el zumbador");
+  Serial.println("     BEEP         prueba de zumbador");
   Serial.println("     POS          muestra la ultima posicion GPS conocida");
+  Serial.println("     BAT/STATUS   estado completo: bateria, BLE, baliza, GPS");
   Serial.println("     NMEA <trama> inyecta una sentencia NMEA a mano, por ejemplo:");
   Serial.println("                  NMEA $GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47");
   Serial.println("     ?            muestra esta ayuda");
-  Serial.println("  El botón de pánico es físico: BOOT (GPIO0) en la placa.");
+  Serial.printf ("  El boton de panico es fisico: GPIO%d en la placa.\n", PIN_BUTTON);
+  Serial.println();
+}
+
+/* Una foto del aparato en una sola orden. Es lo primero que hay que pedirle
+ * cuando algo no va, y lo que conviene enseñar en la expo si preguntan. */
+static void printStatus() {
+  const uint32_t now = millis();
+  Serial.println();
+  Serial.println("  --- ESTADO -------------------------------------------");
+  Serial.printf ("  Encendida desde hace : %lu s\n", (unsigned long)(now / 1000));
+  Serial.printf ("  Estado del boton     : %s%s\n",
+                 panic::Fsm::stateName(g_fsm.state()),
+                 buttonPressed() ? "  (pulsado ahora mismo)" : "");
+  Serial.printf ("  BLE                  : %s\n",
+                 !g_bleUp        ? "DESACTIVADO (arranque a prueba de fallos, ver I12)"
+                 : bleHasClient() ? "con cliente conectado" : "anunciandose, sin cliente");
+  Serial.printf ("  Baliza               : %s\n", g_beaconActive ? "ENCENDIDA" : "apagada");
+  Serial.printf ("  Zumbador             : %s\n",
+                 PIN_BUZZER < 0 ? "no cableado" : (snd::muted() ? "SILENCIADO" : "activo"));
+  if (PIN_VBAT < 0) {
+    Serial.println("  Bateria              : no medida (sin divisor cableado)");
+  } else if (!battery::has()) {
+    Serial.println("  Bateria              : aun sin lectura");
+  } else {
+    Serial.printf ("  Bateria              : %.2f V  (~%u %%)%s\n",
+                   battery::volts(), (unsigned)battery::percent(),
+                   battery::low() ? "  << BAJA" : "");
+  }
+  gps::printStatus(now);
+  Serial.println("  ------------------------------------------------------");
   Serial.println();
 }
 
@@ -608,7 +890,12 @@ static void printBanner() {
   Serial.println("============================================================");
   Serial.println("  GEO-EXPO ALERT  -  Firmware etapa 1");
   Serial.printf ("  Placa            : %s\n", BOARD_LABEL);
-  Serial.printf ("  LED en GPIO%-2d     Boton BOOT en GPIO%d\n", PIN_LED, PIN_BUTTON);
+  Serial.printf ("  LED  GPIO%-3d  Boton GPIO%-3d (%s)\n", PIN_LED, PIN_BUTTON,
+                 BUTTON_ACTIVE_HIGH ? "activo en ALTO" : "a masa, pull-up");
+  if (PIN_BUZZER >= 0) Serial.printf ("  Zumbador piezo   : GPIO%d\n", PIN_BUZZER);
+  else                 Serial.println("  Zumbador piezo   : no cableado (la baliza se simula con el LED)");
+  if (PIN_VBAT >= 0)   Serial.printf ("  Medida de bateria: GPIO%d (divisor 2:1)\n", PIN_VBAT);
+  else                 Serial.println("  Medida de bateria: no cableada");
   Serial.println("------------------------------------------------------------");
   Serial.println("  BLE  Nordic UART Service");
   Serial.printf ("    Nombre   : %s\n", DEVICE_NAME);
@@ -635,16 +922,39 @@ void setup() {
   uint32_t t0 = millis();
   while (!Serial && (millis() - t0) < 2000) { /* espera opcional al USB-CDC (S3) */ }
 
-  pinMode(PIN_BUTTON, INPUT_PULLUP);
-  // Arrancar con BOOT pulsado (o con el DTR del monitor tirando de GPIO0) no
+  buttonBegin();
+  // Arrancar con el botón pulsado (o con el DTR del monitor tirando de GPIO0) no
   // cuenta como flanco: la FSM exige soltarlo antes de armar una pulsación.
-  g_fsm.begin(digitalRead(PIN_BUTTON) == LOW, millis());
+  g_fsm.begin(buttonPressed(), millis());
   led::begin();
+  snd::begin();
+  battery::begin();
 
   printBanner();
   gps::begin();
-  bleBegin();
-  trace("BLE: advertising iniciado como \"GEOEXPO-ALERT\"");
+
+  /* BLE con red de seguridad (ver §6, incidencia I12): si los tres últimos
+   * arranques se colgaron dentro de init(), este arranca sin BLE para que el
+   * botón de pánico siga sirviendo de algo. */
+  if (s_bootMagic != BOOT_MAGIC) {      // arranque en frío: la RTC trae basura
+    s_bootMagic   = BOOT_MAGIC;
+    s_bleAttempts = 0;
+  }
+  if (s_bleAttempts >= BLE_MAX_ATTEMPTS) {
+    Serial.printf("[t=%8lu ms] BLE: DESACTIVADO tras %u arranques colgados en init()"
+                  " (incidencia I12).\n",
+                  (unsigned long)millis(), (unsigned)s_bleAttempts);
+    trace("BLE: el resto del aparato funciona igual. Escribe BLE:RETRY para reintentar.");
+    snd::play(buzzer::PATTERN_LINK_LOST);
+  } else {
+    ++s_bleAttempts;                    // se anota ANTES de entrar en init()
+    bleBegin();
+    s_bleAttempts = 0;                  // si se llega aquí, init() no se colgó
+    g_bleUp       = true;
+    trace("BLE: advertising iniciado como \"GEOEXPO-ALERT\"");
+  }
+
+  snd::play(buzzer::PATTERN_BOOT);
   trace("Sistema listo. Estado inicial: IDLE");
 }
 
@@ -656,6 +966,8 @@ void loop() {
   gps::poll(now);       // tramas NMEA del receptor GPS (si está conectado)
   fsmUpdate(now);       // máquina de estados del botón
   led::update(now);     // realimentación visual
+  snd::update(now);     // realimentación sonora
+  battery::poll(now);   // lectura periódica de la batería (si está cableada)
 
   // Cesión cooperativa al planificador de FreeRTOS para no matar de hambre a
   // la tarea IDLE (evita el "Task watchdog"). NO se usa para temporizar:
