@@ -132,7 +132,7 @@ Binario probado: commit `4f4b050`, RAM **11,2 %**, Flash **45,9 %**.
 | # | Caso | Procedimiento | Resultado esperado | OK | Observaciones |
 |---|---|---|---|:--:|---|
 | 2.1 | `BEACON:ON` | Escribir `BEACON:ON` + Enter en el monitor | `RX BEACON:ON -> baliza ACTIVADA`; LED parpadea a **2 Hz** (250 ms on / 250 ms off) | **x** | |
-| 2.2 | Prioridad de la baliza | Con baliza ON, pulsar BOOT | Llega `>>> TX ALERT:1` por serie, pero el LED **sigue** a 2 Hz | ☐ | Sin probar. |
+| 2.2 | Prioridad de la baliza | Con baliza ON, pulsar el botón | Llega `>>> TX ALERT:1`, pero el LED **sigue** a 2 Hz | *?* | 22-sep: la parte del log está comprobada (la alerta sale igual con la baliza activa). Se repitió de forma controlada, encendiendo la baliza desde el puerto y separando 14 s la pulsación; el usuario lo dio por bueno pero **sin una observación firme del LED**. El código respalda la prioridad: `led::update()` sale por la rama de la baliza antes de mirar el patrón. |
 | 2.3 | `BEACON:OFF` | Escribir `BEACON:OFF` + Enter | `baliza DESACTIVADA`; el LED vuelve a reposo o respiración según el estado | **x** | |
 | 2.4 | Comando inválido | Escribir `HOLA` + Enter | `RX comando no reconocido: "HOLA"` | **x** | `XYZ` → `comando no reconocido`. |
 | 2.5 | Ayuda | Escribir `?` + Enter | Se imprime la lista de comandos | **x** | |
@@ -148,13 +148,41 @@ Binario probado: commit `4f4b050`, RAM **11,2 %**, Flash **45,9 %**.
 | 3.3 | Servicio y características | Desplegar servicio `6E400001-...` | `6E400003-...` (Notify) y `6E400002-...` (Write) | **x** | |
 | 3.4 | Suscripción a TX | Activar *notifications* en `6E400003-...` | Sin error; icono de suscripción activo | **x** | Ojo: el icono es un interruptor. Fiarse del texto `Notifications enabled`, no del icono. |
 | 3.5 | Recibir `ALERT:1` | Pulsación corta de BOOT | En `6E400003-...` llega `ALERT:1\n` (ver en UTF-8) | **x** | `Value: ALERT:1` en el móvil. |
-| 3.6 | Recibir `ALERT:2` | Pulsación prolongada de BOOT | Llega `ALERT:2\n` a los 3 s | ☐ | Sin probar por BLE (sí por serie, caso 1.3). |
-| 3.7 | Recibir `CANCEL` | Cancelar dentro de la ventana | Llega `CANCEL\n` | ☐ | Sin probar por BLE (sí por serie, caso 1.5). |
-| 3.8 | Enviar `BEACON:ON` | Write UTF-8 `BEACON:ON` en `6E400002-...` | Serie: `<<< RX (BLE) "BEACON:ON"`; LED a 2 Hz | *?* | El usuario lo dio por bueno, pero **no quedó registrado en el log**. Repetir para dejar constancia. |
-| 3.9 | Enviar `BEACON:OFF` | Write UTF-8 `BEACON:OFF` | LED deja de parpadear | *?* | Igual que 3.8. |
+| 3.6 | Recibir `ALERT:2` | Pulsación prolongada | Llega `ALERT:2\n` a los 3 s | **x** | 22-sep, **por primera vez por BLE**, con el pulsador externo: `ALERT:2` a los 3000 ms clavados y visto en el iPhone. |
+| 3.7 | Recibir `CANCEL` | Cancelar dentro de la ventana | Llega `CANCEL\n` | **x** | 22-sep, **por primera vez por BLE**: tres `CANCEL` enviados y vistos en el móvil. |
+| 3.8 | Enviar `BEACON:ON` | Write UTF-8 `BEACON:ON` en `6E400002-...` | Serie: `<<< RX (BLE) "BEACON:ON"`; LED a 2 Hz | **x** | 22-sep **con log**: `<<< RX (BLE) "BEACON:ON"` → `baliza ACTIVADA`. Ya no es de palabra. |
+| 3.9 | Enviar `BEACON:OFF` | Write UTF-8 `BEACON:OFF` | LED deja de parpadear | **x** | 22-sep con log. Además aceptó **`BEACON:off` en minúsculas**, escrito tal cual desde el móvil. |
 | 3.10 | Desconexión y re-advertising | DISCONNECT en nRF Connect | Serie: `BLE: cliente DESCONECTADO -> se reanuda el advertising`; vuelve a ser visible en Scan | **x** | Tras desconectar el PC, el móvil volvió a encontrarlo sin resetear la placa. |
 | 3.11 | Funciona sin cliente | Desconectado, pulsar BOOT | Serie: `... registrado solo en serie`; la FSM avanza igual | **x** | Todo el log previo al móvil: `registrado solo en serie`, con la FSM avanzando igual. |
 | 3.12 | Reconexión | CONNECT otra vez, repetir 3.5 | Todo vuelve a funcionar | **x** | PC → desconexión → móvil, sin tocar la placa. |
+
+---
+
+## 3-quater. Sesión BLE del 22-sep (iPhone + pulsador externo)
+
+Primera sesión BLE con el **botón físico** y con el firmware del 19-sep. El
+móvil es un **iPhone**, así que dos avisos de la tabla de arriba no aplican:
+iOS **no muestra la MAC** (enseña un UUID propio, así que lo de la dirección
+`:DA` es cosa de Android) y **no pide el permiso de «Dispositivos cercanos»**
+de la incidencia I4, solo el de Bluetooth.
+
+| # | Caso | Resultado medido | OK |
+|---|---|---|:--:|
+| 3.1 / 3.2 | Escaneo y conexión | `BLE: cliente CONECTADO (1 en total)` | **x** |
+| 3.3 | Servicio y características | Se desplegó `6E400001-...` y se usaron las dos: suscripción en `...0003` y escritura en `...0002` | **x** |
+| 3.4 | Suscripción a TX | Tras activarla, el log pasa a `(enviado por BLE)` | **x** |
+| 3.5 / 3.6 / 3.7 | `ALERT:1`, `ALERT:2` y `CANCEL` | Los tres vistos en el móvil; `ALERT:2` a los **3000 ms exactos** | **x** |
+| 3.8 / 3.9 | `BEACON:ON` / `BEACON:OFF` | Con log esta vez; `BEACON:off` en minúsculas también se aceptó | **x** |
+| 3.10 | Desconexión y re-advertising | `cliente DESCONECTADO (quedan 0) -> se reanuda el advertising` | **x** |
+| 3.11 | Funciona sin cliente | Pulsación con el móvil desconectado: `(sin cliente BLE: registrado solo en serie)` | **x** |
+| 3.12 | Reconexión | Reconectar, suscribirse y pulsar: `ALERT:1 (enviado por BLE)`, sin tocar la placa | **x** |
+| 3c.10 | **Log honesto de TX** | Pulsando **antes** de suscribirse: `(cliente conectado pero SIN suscribirse a TX: NO lo recibe)`. Con el firmware viejo decía «enviado por BLE» y la alerta se perdía en silencio | **x** |
+| 3c.11 | **I16: ¿sigue visible con un cliente conectado?** | Falta confirmar si `GEOEXPO-ALERT` seguía apareciendo en el escaneo estando conectado | ☐ |
+
+> **Regalo de esta sesión: la I11 quedó verificada con un pulsador mecánico.**
+> Buscando una pulsación larga, dos intentos se quedaron cortos y uno soltó a
+> **2980 ms**, justo dentro de la franja 2950–3000 ms donde el firmware viejo
+> emitía `ALERT:2` en vez de `ALERT:1`. Emitió `ALERT:1`, que es lo correcto.
 
 ---
 
@@ -212,7 +240,7 @@ y cableado en el README §2-bis.
 | V1 | El LED responde al botón BOOT según lo especificado | 1.1–1.10 | **x** | La lógica está verificada por serie con marcas de tiempo. Faltan 1.6, 1.7 y 1.9. |
 | V2 | El dispositivo aparece como `GEOEXPO-ALERT` al escanear con nRF Connect | 3.1 | **x** | Confirmado desde el móvil y desde el PC. |
 | V3 | Al pulsar llegan los mensajes correctos a nRF Connect | 3.5, 3.6, 3.7 | **x** | `ALERT:1` llegó al móvil. `ALERT:2` y `CANCEL` sólo verificados por serie. |
-| V4 | Al escribir `BEACON:ON` desde nRF Connect el LED empieza a parpadear | 3.8 | *?* | Dado por bueno de palabra, sin log. Repetir para dejar constancia. |
+| V4 | Al escribir `BEACON:ON` desde nRF Connect el LED empieza a parpadear | 3.8 | **x** | 22-sep con log, desde un iPhone. |
 | V5 | El firmware sabe convertir tramas NMEA en una posición | 3b.2–3b.7 | **x** | 16/16 pruebas automáticas + inyección manual en la placa. |
 
 ---

@@ -11,3 +11,6 @@
 
 # Sistema
 .DS_Store
+
+# Capturas del arnes serie (tools/hw.py)
+tools/*.log
