@@ -20,7 +20,45 @@ a 2 Hz e imprimiendo en serie.
 
 ---
 
-## 0. Punto de continuación — 10-sep-2026
+## 0. Punto de continuación — 22-sep-2026
+
+**Estado: el llavero de la DevKit queda listo para cablear (botón externo,
+zumbador y batería), y el enlace LoRa punto a punto entre dos Heltec V3 está
+escrito y probado en el PC, a falta de placas.**
+
+### Sesión del 22-sep (otra vez sin placa delante)
+
+- **Las cosas del botón, terminadas.** Los pines ya no están escritos a mano en
+  el código: salen de `platformio.ini`, con comprobaciones que saltan **al
+  compilar** si alguien pone el botón y el LED en el mismo pin o el zumbador en
+  un GPIO que sólo sabe leer. Entorno nuevo `devkit_llavero` con el cableado de
+  verdad: **botón en GPIO4, zumbador piezo en GPIO25 y batería en GPIO34**.
+- **Zumbador piezo** (`lib/buzzer`): patrones propios para `ALERT:1`, `ALERT:2`,
+  `CANCEL`, alerta confirmada, baliza y búsqueda, con prioridades —una alerta no
+  la tapa un bip de interfaz— y **modo mudo** (`MUTE:ON`) para la expo.
+- **Batería** por ADC, opcional, con aviso de batería baja y comando `STATUS`.
+- **Arranque a prueba de fallos para la I12**: si tres arranques seguidos se
+  cuelgan dentro de `NimBLEDevice::init()`, el cuarto arranca **sin BLE**. Lo
+  grave de esa incidencia no era quedarse sin Bluetooth, era que el bucle de
+  reinicio se llevaba por delante **el botón de pánico**. Ahora el botón, el
+  LED, el zumbador y el GPS siguen funcionando y el log lo dice con todas las
+  letras. Se rearma con `BLE:RETRY`.
+- **Enlace LoRa punto a punto** entre dos Heltec V3, estilo AirTag: un llavero
+  que avisa y un buscador que dice "caliente/frío". Todo el detalle en
+  **`LORA-P2P.md`**. Es el archivo que hay que leer antes de tocar las Heltec.
+- **47 pruebas nuevas** (protocolo, cercanía y zumbador). Con las 34 que ya
+  había son **81, todas pasando en el PC** en un par de segundos.
+- **`tools/comprobar-sintaxis.sh`**: pasa el `g++` del sistema por los dos
+  firmwares con cabeceras de mentira. No sustituye a compilar de verdad, pero
+  caza erratas en segundos y **sin descargar el toolchain de ESP32**.
+
+> ⚠️ **Nada de esta sesión se ha probado en placa**, ni la DevKit ni las Heltec
+> (que todavía no están). Lo que hay que comprobar cuando haya hardware está en
+> `PRUEBAS.md` §5 (LoRa) y en la lista de "qué falta por probar".
+
+---
+
+## 0-bis. Punto de continuación anterior — 10-sep-2026
 
 **Estado: etapa 1 verificada en la placa, módulo GPS probado y la lógica del
 botón ahora cubierta por pruebas automáticas que corren en el PC.**
@@ -39,7 +77,7 @@ dejar montada una red de seguridad que no dependa de tener la placa:
   milisegundo: el umbral de los 3 s, rebotes al pulsar y al soltar, cancelar
   desde pulsación corta y larga, la ventana que expira, arrancar con el botón
   pulsado y hasta el desbordamiento de `millis()` a los 49,7 días. Con las 16
-  del GPS son **34 pruebas, todas pasando en el PC**:
+  del GPS son **34 pruebas, todas pasando en el PC** (hoy son 81):
   ```bash
   pio test -e native
   ```
@@ -177,8 +215,30 @@ El antirrebote de 50 ms se aplica **al flanco de bajada y al de subida**.
 
 > Mientras la baliza está encendida, el LED muestra el parpadeo de 2 Hz y
 > enmascara la realimentación del botón. La FSM sigue funcionando y los
-> mensajes BLE/serie se emiten igual. Cuando llegue el buzzer, la baliza pasará
-> a él y el LED recuperará la realimentación del botón.
+> mensajes BLE/serie se emiten igual.
+
+### Realimentación sonora del zumbador (`lib/buzzer`)
+
+Con `-D PIN_BUZZER_CFG=<pin>` (el entorno `devkit_llavero` ya lo trae en
+GPIO25) cada evento tiene además su sonido:
+
+| Situación | Zumbador |
+|---|---|
+| Arranque | dos notas cortas ascendentes |
+| `ALERT:1` | un pitido de 250 ms |
+| `ALERT:2` | dos pitidos, el segundo más agudo y más largo |
+| `CANCEL` | tres pitidos descendentes |
+| Ventana expirada (alerta **confirmada**) | dos pitidos secos |
+| Baliza (`BEACON:ON`) | sirena lenta, sin parar |
+
+Los patrones tienen **prioridad**: la baliza no la tapa una alerta, y una
+alerta no la tapa el bip de una confirmación. `MUTE:ON` silencia el zumbador
+sin tocar nada más (útil si en la expo hay que bajar el volumen un rato);
+`BEEP` hace una prueba de sonido.
+
+El zumbador es **pasivo**: no suena solo, hay que darle una onda cuadrada. Se
+genera con LEDC en un canal propio, para no pelearse con el `analogWrite()` que
+mueve el LED.
 
 ---
 
@@ -424,51 +484,54 @@ monitor + comportamiento del LED) y lo depuramos.
 
 ---
 
-## 7. Migración a Heltec WiFi LoRa 32 V3 (ESP32-S3) — ❌ CANCELADA
+## 7. Heltec WiFi LoRa 32 V3 (ESP32-S3) — enlace LoRa punto a punto
 
-> **Esta migración NO se va a hacer.** El pedido de la Heltec se canceló el
-> 8-sep, así que **todo el proyecto se queda en la ESP32 DevKit V1** y no hay
-> LoRa en ninguna etapa.
+> **Esto cambió el 22-sep.** Lo que en septiembre estaba cancelado vuelve al
+> plan, pero **no como migración**: la DevKit sigue siendo el llavero con BLE
+> y el equipo de la app no tiene que cambiar nada. Lo de las Heltec es un
+> **segundo aparato** que funciona por su cuenta, de placa a placa, sin móvil.
 >
-> El entorno `heltec_v3` de `platformio.ini` y los `#if defined(BOARD_HELTEC_V3)`
-> de `src/main.cpp` se conservan porque siguen compilando y no estorban, pero
-> son **material muerto**: no los tomes como trabajo pendiente. El resto de
-> esta sección queda sólo como referencia, por si algún día se retoma otra
-> placa.
+> **Todo está en `LORA-P2P.md`**: qué hace cada papel, cómo se monta, cómo se
+> flashea, los comandos, el formato de trama y la lista de pruebas pendientes.
+> Aquí sólo queda el resumen y las notas de portabilidad que ya estaban.
 
-Entorno preparado (sin uso): `pio run -e heltec_v3`.
+```bash
+pio run -e heltec_tag    -t upload     # el llavero que avisa
+pio run -e heltec_finder -t upload     # el buscador que lo encuentra
+```
 
-### Qué cambia automáticamente (ya resuelto en el código)
+El firmware de las Heltec es `src/lora/main_lora.cpp` y **no** comparte
+`main.cpp` con la DevKit: son dos aparatos distintos que sí comparten las
+librerías de `lib/` (botón, GPS, zumbador). Reaprovechar `lib/panic` significa
+que el botón de pánico se comporta **exactamente igual** en las dos placas.
+
+### Notas de portabilidad que siguen valiendo
 
 | Punto | Cómo está resuelto |
 |---|---|
-| **Pines** | `src/main.cpp` §1: bloque `#if defined(BOARD_HELTEC_V3)`. LED `GPIO2 → GPIO35`, botón sigue en `GPIO0`. |
-| **Pila BLE** | Se usa **NimBLE-Arduino**, la misma API en ESP32 y ESP32-S3. No hay `#ifdef` de BLE. |
-| **PWM del LED** | Se usa `analogWrite()`, portable entre arduino-esp32 2.x y 3.x (no se usa `ledcSetup`/`ledcAttachPin`, que cambian de firma). |
-| **USB / puerto serie** | El S3 usa USB nativo (CDC). El entorno `heltec_v3` ya añade `-D ARDUINO_USB_MODE=1 -D ARDUINO_USB_CDC_ON_BOOT=1`. El puerto será **`/dev/ttyACM0`**. |
+| **Pines** | Todos salen de `platformio.ini` con `-D`. El LED integrado de la V3 es `GPIO35`; el botón PRG, `GPIO0`. Los de la radio (NSS 8, SCK 9, MOSI 10, MISO 11, RST 12, BUSY 13, DIO1 14) van soldados en la placa. |
+| **PWM del LED** | En la DevKit se usa `analogWrite()`, portable entre arduino-esp32 2.x y 3.x. El zumbador sí usa LEDC directamente, con `#if ESP_ARDUINO_VERSION_MAJOR >= 3` para las dos firmas de la API. |
+| **USB / puerto serie** | El S3 usa USB nativo (CDC): los entornos `heltec_*` ya añaden `-D ARDUINO_USB_MODE=1 -D ARDUINO_USB_CDC_ON_BOOT=1`. El puerto será **`/dev/ttyACM0`**. |
+| **Radio** | `RadioLib` con el `SX1262`, en `src/lora/main_lora.cpp`. Transmisión **no bloqueante** (interrupción de DIO1), como todo lo demás del proyecto. |
 
-### Qué habrá que revisar / decidir a mano
+### Cosas a tener en cuenta con las Heltec
 
-1. **Versión de NimBLE + core.** Este proyecto fija
-   `platform = espressif32@6.9.0` (arduino-esp32 **2.0.17**) y
-   `NimBLE-Arduino @ ^1.4.3`. Si al migrar se sube a arduino-esp32 **3.x**
-   (platform 51.x), conviene pasar a **NimBLE-Arduino 2.x**, que cambia
-   algunas firmas de callbacks:
-   - `onConnect(NimBLEServer*, NimBLEConnInfo&)` (antes `NimBLEServer*` solo).
-   - `onWrite(NimBLECharacteristic*, NimBLEConnInfo&)` (antes `NimBLECharacteristic*` solo).
-   - `NimBLEDevice::setPower()` recibe `int` en dBm en vez de `esp_power_level_t`.
-   Son 3 sitios en `src/main.cpp` (clases `ServerCB`, `RxCB` y `bleBegin`).
-2. **LED blanco de la Heltec V3 y `Vext`.** El LED de GPIO35 es directo, pero la
-   placa tiene control de alimentación de periféricos (`Vext`, GPIO36) y el
-   OLED. No afecta a este firmware, pero tenlo presente al añadir pantalla.
-3. **El botón PRG (GPIO0) es también strapping de arranque**, igual que en la
-   DevKit: no lo pulses mientras resetea.
-4. **Radio LoRa (SX1262).** Este firmware **no** toca LoRa. La mensajería larga
-   distancia entre las dos Heltec es trabajo de la siguiente etapa
-   (librería `RadioLib`, pines SPI dedicados del módulo).
-5. **Bluetooth clásico.** La DevKit (WROOM-32) tiene BT clásico + BLE; el S3
-   solo **BLE**. Este firmware usa solo BLE, así que no hay pérdida de
-   funcionalidad.
+1. **Antena obligatoria.** No enciendas la radio sin ella: la potencia rebota
+   hacia el amplificador y se puede cargar el módulo.
+2. **Banda de frecuencia.** Las V3 vienen en versión US915 o EU868 y no son
+   intercambiables. `-D LORA_FREQ_MHZ` tiene que corresponder a tu placa **y a
+   la ley de tu país** (915 en América, 868 en Europa).
+3. **El botón PRG (GPIO0) es strapping de arranque**, igual que en la DevKit:
+   vale para probar, pero el botón definitivo va en otro pin.
+4. **`Vext` (GPIO36)** alimenta los periféricos de la placa y el OLED. Este
+   firmware no usa pantalla, pero tenlo presente si se añade.
+5. **Versión de NimBLE + core**, si algún día se mete BLE en la Heltec: con
+   arduino-esp32 **3.x** hay que pasar a **NimBLE-Arduino 2.x**, que cambia
+   tres firmas en `src/main.cpp` (`ServerCB`, `RxCB` y `bleBegin`):
+   `onConnect(NimBLEServer*, NimBLEConnInfo&)`,
+   `onWrite(NimBLECharacteristic*, NimBLEConnInfo&)` y `setPower(int dBm)`.
+6. **Bluetooth clásico.** La DevKit (WROOM-32) tiene BT clásico + BLE; el S3
+   solo **BLE**. Este proyecto usa solo BLE, así que no se pierde nada.
 
 ---
 
@@ -569,25 +632,45 @@ Ya está comprobado que compila.
 
 ```
 Expofisica/
-├── platformio.ini           # entornos: devkit_v1 (el bueno), heltec_v3 (opcional), native (pruebas PC)
+├── platformio.ini           # entornos: devkit_v1, devkit_llavero, heltec_tag,
+│                            #           heltec_finder y native (pruebas en el PC)
 ├── src/
-│   └── main.cpp             # firmware: pines, LED, BLE, comandos y pegamento
+│   ├── main.cpp             # firmware DevKit: BLE, botón, LED, zumbador, GPS
+│   └── lora/
+│       └── main_lora.cpp    # firmware Heltec V3: enlace LoRa punto a punto
+│                            # (el mismo archivo hace de llavero o de buscador)
 ├── lib/                     # lógica pura, SIN Arduino -> se prueba en el PC
-│   ├── nmea/                # módulo GPS: parseo de tramas NMEA
-│   │   ├── nmea.h
-│   │   └── nmea.cpp
-│   └── panic/               # máquina de estados del botón de pánico
-│       ├── panic.h
-│       └── panic.cpp
-├── test/
-│   ├── test_nmea/           # 16 pruebas del módulo GPS
-│   │   └── test_nmea.cpp
-│   └── test_panic/          # 18 pruebas de la FSM del botón
-│       └── test_panic.cpp
+│   ├── nmea/                # GPS: parseo de tramas NMEA
+│   ├── panic/               # máquina de estados del botón de pánico
+│   ├── buzzer/              # patrones del zumbador piezo
+│   ├── link/                # protocolo GEO-LINK: trama, firma, antirrepetición
+│   └── ranging/             # RSSI -> zona -> distancia -> cadencia de pitido
+├── test/                    # 81 pruebas automáticas (pio test -e native)
+│   ├── test_nmea/     (16)
+│   ├── test_panic/    (18)
+│   ├── test_link/     (20)
+│   ├── test_ranging/  (14)
+│   └── test_buzzer/   (13)
+├── tools/
+│   ├── comprobar-sintaxis.sh   # g++ sobre los dos firmwares, sin toolchain ESP32
+│   └── stubs/                  # cabeceras de mentira SÓLO para ese script
 ├── README.md                # este archivo
+├── LORA-P2P.md              # el enlace LoRa entre las dos Heltec, al detalle
+├── INTEGRACION-APP.md       # contrato BLE para el equipo de la app Android
 ├── PRUEBAS.md               # tabla de casos de prueba
 └── .gitignore
 ```
+
+### Qué entorno uso para qué
+
+| Quiero… | Entorno |
+|---|---|
+| Probar la lógica sin ninguna placa (2 s) | `pio test -e native` |
+| Probar el botón con la DevKit tal cual, sin cablear nada | `pio run -e devkit_v1 -t upload` |
+| El llavero cableado: botón externo, zumbador y batería | `pio run -e devkit_llavero -t upload` |
+| El llavero LoRa | `pio run -e heltec_tag -t upload` |
+| El buscador LoRa | `pio run -e heltec_finder -t upload` |
+| Saber si un cambio compila, sin descargar nada | `./tools/comprobar-sintaxis.sh` |
 
 ---
 
@@ -598,6 +681,11 @@ Expofisica/
 | `Unable to verify flash chip connection (No serial data received.)` | `upload_speed` demasiado alto para el cable. Deja **115200** (ya está así en `platformio.ini`). |
 | `sh: gcc: orden no encontrada` al hacer `pio test -e native` | Ya resuelto (hay `gcc-c++`). Si reaparece en otra máquina: `sudo dnf install gcc-c++`. |
 | **Al abrir el monitor salen solas transiciones de la FSM y hasta un `ALERT:2`** | El terminal activa **DTR**, que en esta placa está cableado a **GPIO0** — el mismo pin del botón. Ya está corregido con `monitor_dtr = 0` y `monitor_rts = 0` en `platformio.ini`. Si usas otro terminal (screen, Arduino IDE, minicom), **desactiva DTR/RTS ahí también** o volverá a pasar. |
+| **La placa arranca diciendo "BLE: DESACTIVADO tras 3 arranques colgados"** | Es la red de seguridad de la **I12** haciendo su trabajo: tres arranques seguidos se colgaron dentro de `NimBLEDevice::init()` y el firmware ha arrancado **sin BLE** para que el botón de pánico siga funcionando. El aparato sirve igual salvo por el Bluetooth. Para reintentar: comando **`BLE:RETRY`** (pone el contador a cero y reinicia) o quitar y poner la alimentación. Si vuelve a pasar siempre, es la I12 de verdad y hay que mirar el punto siguiente. |
+| **El zumbador no suena** | ¿Está compilado con `-D PIN_BUZZER_CFG=<pin>` (el entorno `devkit_v1` NO lo trae, `devkit_llavero` sí)? ¿Hay un `MUTE:ON` activo? Prueba con el comando **`BEEP`**. Y comprueba que el piezo sea **pasivo**: uno activo suena a su propia frecuencia y con estas señales apenas se le oye. |
+| **La placa no arranca desde que se cableó el botón** | El botón está en un *strapping pin* (GPIO0, 2, 12 o 15) y estaba pulsado al resetear. Cámbialo a GPIO4, 5, 18, 19, 21, 22, 23, 25, 26 o 27 con `-D PIN_BUTTON_CFG=<pin>`. |
+| **El botón se comporta al revés (parece pulsado siempre)** | Está cableado a 3V3 en vez de a masa. Compila con `-D BUTTON_ACTIVE_HIGH=1` o cámbialo a masa. |
+| **`STATUS` dice "Bateria: no medida"** | No hay divisor cableado o falta `-D PIN_VBAT_CFG=<pin>`. El pin tiene que ser del ADC1 (GPIO32-39): los del ADC2 dejan de leerse en cuanto el WiFi está activo, así que mejor no jugársela. |
 | **Bucle de reinicio: `rst:0x8 (TG1WDT_SYS_RESET)` justo tras el banner** | Incidencia **I12**, sin causa conocida. **Cómo confirmar que es ella:** en el log sale `BLE: entrando en NimBLEDevice::init() ...` y **nunca** llega el `init() completado` de la línea siguiente. Se queda dentro de la espera `while(!m_synced) taskYIELD();` del final de `NimBLEDevice::init()` (`NimBLEDevice.cpp:910`), esperando un `sync` del controlador BT que no llega. **Qué hacer:** vuelve al último binario que arrancaba (`git stash` de tus cambios + `pio run -t upload`) y comprueba con **10 reinicios seguidos** antes de dar nada por bueno. |
 | `POS` dice siempre "sin posicion valida" | Con `GPS_UART_ENABLED=0` es lo normal: no hay GPS, alimenta la posición con `NMEA <trama>`. Con el módulo puesto, sácalo a la vista del cielo y espera 1-2 min. |
 | Una trama NMEA sale siempre "DESCARTADA" | Checksum mal copiado, o la línea se cortó: el buffer de comandos son 128 caracteres. Comprueba que copiaste la trama entera, `$` y `*HH` incluidos. |

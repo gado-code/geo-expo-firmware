@@ -231,3 +231,38 @@ escrituras `BEACON:ON` / `BEACON:OFF`. Si algo de eso no os funciona, es la app.
 
 Cualquier duda o cambio que necesitéis en el firmware, decídnoslo antes de
 programar alrededor del problema.
+
+---
+
+## 10. Novedades del 22-sep (no os afectan, pero conviene que las sepáis)
+
+**El contrato de la sección 1 no ha cambiado ni un carácter.** `ALERT:1`,
+`ALERT:2`, `CANCEL`, `BEACON:ON` y `BEACON:OFF` siguen siendo exactamente lo
+que eran, y la posición dentro de las alertas **sigue apagada** hasta que la
+acordemos con vosotros. Lo que ha cambiado en el dispositivo:
+
+- **Zumbador piezo**: ahora el aparato pita además de parpadear. Nada que
+  hacer en la app.
+- **Comandos nuevos en la característica RX** (`...0002`), sólo de
+  depuración, por si os sirven para probar:
+
+  | Comando | Efecto |
+  |---|---|
+  | `MUTE:ON` / `MUTE:OFF` | Silencia o reactiva el zumbador |
+  | `BEEP` | Pitido de prueba |
+  | `BAT` o `STATUS` | Vuelca el estado por el monitor serie (no responde por BLE) |
+
+  Son **extras**, no parte del contrato: no los deis por garantizados en
+  producción, y si alguno os resulta útil de verdad, decidlo y lo formalizamos
+  con respuesta por TX.
+
+- **Arranque a prueba de fallos.** Si el dispositivo se queda tres arranques
+  seguidos colgado al iniciar el Bluetooth (incidencia conocida I12), el cuarto
+  arranca **sin BLE a propósito**, para que el botón de pánico siga sirviendo.
+  Desde la app eso se ve como **el dispositivo no aparece en el escaneo**, no
+  como un fallo de conexión. Si os pasa, avisadnos: se rearma desde el monitor
+  serie con `BLE:RETRY`.
+
+- **Segundo aparato, aparte**: hay un enlace LoRa punto a punto entre dos
+  placas Heltec, sin móvil de por medio (`LORA-P2P.md`). **No toca vuestra
+  parte**: es un camino alternativo para cuando no hay móvil cerca.

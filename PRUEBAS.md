@@ -1,11 +1,13 @@
 # PRUEBAS · GEO-EXPO ALERT (firmware etapa 1)
 
-Placa: ESP32 DevKit V1 · Firmware: `src/main.cpp` · Última sesión con la placa: **9-sep-2026** · Última revisión del código: **10-sep-2026**
+Placas: ESP32 DevKit V1 (`src/main.cpp`) y Heltec WiFi LoRa 32 V3 (`src/lora/main_lora.cpp`) · Última sesión con placa: **9-sep-2026** · Última revisión del código: **22-sep-2026**
 
-> ⚠️ **Los cambios del 10-sep NO están probados en la placa** (se trabajó sin
-> ella). Están cubiertos por las pruebas automáticas de la §0-bis, pero la
-> tabla de abajo sigue reflejando la sesión del 9-sep. Al volver a tener el
-> ESP32: flashear y repetir **0.4, 0.5, 1.1-1.10 y 3.x**.
+> ⚠️ **Los cambios del 10-sep y del 22-sep NO están probados en placa** (las dos
+> sesiones se hicieron sin ella). Están cubiertos por las pruebas automáticas de
+> la §0-bis, pero las tablas de abajo siguen reflejando la sesión del 9-sep. Al
+> volver a tener el ESP32: flashear y repetir **0.4, 0.5, 1.1-1.10 y 3.x**, más
+> lo nuevo del zumbador y el botón externo (**§4-bis**). Las pruebas del enlace
+> LoRa (**§5**) esperan a que haya dos Heltec V3.
 
 Marca cada casilla: **x** = pasado con registro · *?* = dado por bueno sin log · ☐ = sin probar.
 Monitor serie a **115200 bps**. App móvil: **nRF Connect for Mobile**.
@@ -38,8 +40,15 @@ pio test -e devkit_v1   # las mismas pruebas, ejecutadas en el ESP32
 |---|---|---|:--:|:--:|
 | 0.6 | `test/test_nmea/` | Parseo NMEA: GGA, RMC, hemisferios con signo, checksum corrupto, trama sin fix, desbordamiento, flujo carácter a carácter | 16 | **x** |
 | 0.7 | `test/test_panic/` | FSM del botón: umbral de los 3 s, rebotes al pulsar y al soltar, cancelar desde corta y desde larga, ventana que expira, arranque con el botón pulsado, ciclos encadenados, desbordamiento de `millis()` | 18 | **x** |
+| 0.8 | `test/test_link/` | Protocolo GEO-LINK: ida y vuelta de todos los campos, coordenadas negativas, tamaño/magic/versión/tipo malos, **un bit cambiado en cualquier byte firmado**, clave distinta, orden falsificada, contador circular y antirrepetición | 20 | **x** |
+| 0.9 | `test/test_ranging/` | Cercanía: umbrales de zona, distancia a 1 m y su crecimiento, configuración absurda sin dividir por cero, suavizado que amortigua un pico, pérdida de señal por silencio, recuperación sin arrastrar lo viejo, tendencia acercarse/alejarse | 14 | **x** |
+| 0.10 | `test/test_buzzer/` | Zumbador: un patrón suena y termina, repetición finita e infinita, un `loop()` atascado no estira el patrón, prioridades (la baliza no la pisa una alerta), `stopIf`, modo mudo, patrón vacío | 13 | **x** |
 
-Resultado del 10-sep: **34 de 34 pasan**.
+Resultado del 22-sep: **81 de 81 pasan** (34 del 10-sep + 47 nuevas).
+
+> Si `pio` no puede descargar el toolchain (sin red, o el registro bloqueado),
+> `./tools/comprobar-sintaxis.sh` al menos comprueba que los dos firmwares
+> compilan. No sustituye a las pruebas, pero caza erratas en segundos.
 
 Las pruebas de `test_panic` simulan el botón **milisegundo a milisegundo**, así
 que cubren cosas que a mano son casi imposibles de reproducir: soltar a 2999 ms
@@ -130,6 +139,52 @@ el mismo manejador). Copia las tramas **enteras**, con `$` y `*HH`.
 
 ---
 
+## 4-bis. Llavero cableado: botón externo, zumbador y batería (`devkit_llavero`)
+
+Todo esto es **del 22-sep y está sin probar en placa**: hace falta soldar el
+botón, el piezo y el divisor de batería. Compilar con
+`pio run -e devkit_llavero -t upload`.
+
+| # | Caso | Procedimiento | Resultado esperado | OK |
+|---|---|---|---|:--:|
+| 4b.1 | Arranca con los pines nuevos | Flashear y abrir el monitor | El banner dice `Boton GPIO4`, `Zumbador piezo: GPIO25` y `Medida de bateria: GPIO34` | ☐ |
+| 4b.2 | Botón externo | Pulsación corta en el botón nuevo | Igual que el caso 1.1 (BOOT ya no se usa) | ☐ |
+| 4b.3 | El arranque no depende del botón | Resetear **con el botón pulsado** | La placa arranca normal y **no** dispara alerta al soltarlo | ☐ |
+| 4b.4 | Prueba de zumbador | Escribir `BEEP` | Dos notas cortas ascendentes | ☐ |
+| 4b.5 | Sonido de cada evento | Repetir 1.1, 1.3, 1.5 y 1.2 | Un pitido / dos pitidos / tres descendentes / dos secos al confirmar | ☐ |
+| 4b.6 | Prioridad del sonido | Con `BEACON:ON`, pulsar el botón | La sirena de la baliza **no** se interrumpe; la alerta sale igual por BLE y serie | ☐ |
+| 4b.7 | Modo mudo | `MUTE:ON`, pulsar el botón, `MUTE:OFF` | Con mudo no suena nada pero el LED y el BLE siguen; al quitarlo vuelve el sonido | ☐ |
+| 4b.8 | Batería | `STATUS` con la batería puesta | Tensión creíble (3,3-4,2 V) y porcentaje acorde | ☐ |
+| 4b.9 | Aviso de batería baja | Bajar la batería (o simular con el divisor) por debajo del 20 % | `STATUS` marca `<< BAJA` | ☐ |
+| 4b.10 | Arranque a prueba de fallos (I12) | Provocar tres cuelgues en `init()` (o flashear un binario de los que fallan) | Al cuarto arranque: `BLE: DESACTIVADO tras 3 arranques colgados`, y **el botón sigue funcionando**. `BLE:RETRY` lo rearma | ☐ |
+
+> 4b.10 es el caso importante: lo grave de la I12 nunca fue quedarse sin
+> Bluetooth, sino que el bucle de reinicio dejaba el **botón de pánico**
+> inservible.
+
+---
+
+## 5. Enlace LoRa punto a punto (dos Heltec WiFi LoRa 32 V3)
+
+**Sin placas todavía.** El detalle de cada prueba, con lo que tiene que salir
+en el monitor, está en **`LORA-P2P.md` §7**; aquí queda el resumen para no
+perder la cuenta.
+
+| # | Caso | Resultado esperado | OK |
+|---|---|---|:--:|
+| L1 | Flashear las dos (`heltec_tag`, `heltec_finder`) | Banner con el papel correcto y `RADIO: escuchando` | ☐ |
+| L2 | Balizas en reposo | El buscador imprime una línea cada 15 s | ☐ |
+| L3 | Alejarse con el llavero | La zona baja de `AQUI` a `CERCA` y a `LEJOS`; la flecha dice que te alejas | ☐ |
+| L4 | Alerta corta | `*** ALERTA CORTA ***` en el buscador, ACK de vuelta, `ALERTA CONFIRMADA` en el llavero | ☐ |
+| L5 | Cancelar dentro de los 10 s | Llega la cancelación y el buscador se calla | ☐ |
+| L6 | Buscador apagado | El llavero reintenta 6 veces y avisa de que nadie contestó | ☐ |
+| L7 | Modo búsqueda (`FIND`) | El llavero pita; el buscador pita cada vez más seguido al acercarse | ☐ |
+| L8 | Clave distinta en una placa | Todas las tramas salen como `firma invalida` | ☐ |
+| L9 | Alcance real en el patio | **Anotar los metros**: es el dato que va a preguntar todo el mundo | ☐ |
+| L10 | Consumo con batería | Cuánto dura con baliza lenta y con baliza rápida | ☐ |
+
+---
+
 ## Registro de incidencias
 
 Lo que costó tiempo de verdad en la sesión del 9-sep. Casi nada fue el código.
@@ -150,7 +205,7 @@ Lo que costó tiempo de verdad en la sesión del 9-sep. Casi nada fue el código
 | I13 | **Una pulsación normal se PERDÍA si venía justo después de un rebote**: el botón parecía muerto hasta soltarlo del todo y volver a pulsar. | Al volver de `DEBOUNCE` a `IDLE` por rebote, el nivel previo se quedaba en «pulsado» (lo había dejado así la detección del flanco). Cuando el contacto se asentaba de verdad ya no había transición suelto→pulsado que detectar. Nunca salió en las pruebas a mano porque el caso 1.7 se probó con un pulso limpio de 20 ms, sin lo que viene detrás. | ✅ Corregido: ahora se resincroniza el nivel **siempre** que se entra en `IDLE` (`lib/panic/panic.cpp`, `enterIdle`). Cubierto por `test_i13_pulsacion_tras_rebote_no_se_pierde`, que **falla** si se quita el arreglo. |
 | I14 | **Las alertas dejaban de salir por BLE si un segundo móvil se desconectaba**, aunque el primero siguiera conectado. El log decía «sin cliente BLE». | `g_bleConnected` era un `bool` que **cualquier** `onDisconnect` ponía a `false`, y NimBLE admite hasta 3 clientes a la vez. En un botón de pánico es el fallo más grave posible: la alerta se registra en el serie y nadie la recibe. | ✅ Corregido: se le pregunta al servidor con `getConnectedCount()` en vez de llevar un booleano propio (`src/main.cpp` §6). |
 | I15 | Dos comandos BLE seguidos y rápidos: el primero se perdía sin dejar rastro. | La cola RX tenía **un solo hueco**; el segundo `WRITE` pisaba al primero antes de que `loop()` lo leyera. | ✅ Corregido: anillo de 4 huecos y aviso explícito en el log si aun así se llena. |
-| I12 | **SIN RESOLVER.** Ciertos binarios se quedan colgados dentro de `NimBLEDevice::init()` y la placa entra en bucle de reinicio (`rst:0x8 TG1WDT_SYS_RESET`), **sin ningún mensaje de panic**. | Desconocida. Es determinista por binario y depende del *layout* del código: el mismo fuente con una línea de más arranca. Descartados: NVS corrupta (falla igual tras `pio run -t erase`), desbordamiento de pila de `loopTask` (sólo usa 1952 B de 8192) y la versión de NimBLE (sin cambios desde el 8-sep). **Acotado el 10-sep:** el punto exacto es la espera `while(!m_synced) taskYIELD();` del final de `NimBLEDevice::init()` (`NimBLEDevice.cpp:910`), que gira esperando un `sync` del controlador BT que nunca llega. Se descartó también que el compilador estuviera sacando la lectura de `m_synced` fuera del bucle: `taskYIELD()` es una llamada real a `vPortYield()`, así que la variable se relee en cada vuelta. | ⚠️ Mitigado, no resuelto. Añadidos dos marcadores en el log (`entrando en NimBLEDevice::init()` / `init() completado`) para reconocerla de un vistazo. **Ojo:** los cambios del 10-sep mueven el *layout*, así que hay que volver a comprobar **10 arranques seguidos** al flashear. |
+| I12 | **SIN RESOLVER.** Ciertos binarios se quedan colgados dentro de `NimBLEDevice::init()` y la placa entra en bucle de reinicio (`rst:0x8 TG1WDT_SYS_RESET`), **sin ningún mensaje de panic**. | Desconocida. Es determinista por binario y depende del *layout* del código: el mismo fuente con una línea de más arranca. Descartados: NVS corrupta (falla igual tras `pio run -t erase`), desbordamiento de pila de `loopTask` (sólo usa 1952 B de 8192) y la versión de NimBLE (sin cambios desde el 8-sep). **Acotado el 10-sep:** el punto exacto es la espera `while(!m_synced) taskYIELD();` del final de `NimBLEDevice::init()` (`NimBLEDevice.cpp:910`), que gira esperando un `sync` del controlador BT que nunca llega. Se descartó también que el compilador estuviera sacando la lectura de `m_synced` fuera del bucle: `taskYIELD()` es una llamada real a `vPortYield()`, así que la variable se relee en cada vuelta. | ⚠️ **Acotada y contenida, no resuelta.** El 22-sep se añadió el **arranque a prueba de fallos**: un contador en memoria RTC cuenta los arranques que entran en `init()` y no salen; al cuarto, el firmware arranca **sin BLE** y el botón de pánico, el LED, el zumbador y el GPS siguen funcionando (se rearma con `BLE:RETRY`). Eso quita lo grave —la placa en bucle con el botón muerto— pero **no arregla la causa**. Antes ya se habían añadido dos marcadores en el log (`entrando en NimBLEDevice::init()` / `init() completado`) para reconocerla de un vistazo. **Ojo:** los cambios del 10-sep mueven el *layout*, así que hay que volver a comprobar **10 arranques seguidos** al flashear. |
 
 > Recordatorio: sólo un proceso puede tener abierto `/dev/ttyUSB0`. Si dos lo
 > leen a la vez se reparten los bytes y ninguno ve la salida entera.
@@ -159,6 +214,17 @@ Lo que costó tiempo de verdad en la sesión del 9-sep. Casi nada fue el código
 ---
 
 ## Qué falta por probar
+
+**De la sesión del 22-sep (todo sin placa):**
+
+- **§4-bis entera**: botón externo, zumbador, batería y el arranque a prueba de
+  fallos de la I12.
+- **§5 entera**: el enlace LoRa, en cuanto haya dos Heltec V3.
+- Comprobar que el entorno `devkit_v1` de siempre **sigue igual** tras los
+  cambios: mismos textos de log, mismos tiempos, mismo comportamiento del LED.
+  Los pines por defecto no han cambiado, pero eso hay que verlo, no suponerlo.
+
+**De antes:**
 
 - **Reflashear y revalidar todo lo del 10-sep** (§0-bis dice qué está cubierto
   por pruebas automáticas y qué no). En especial **10 arranques seguidos** por
