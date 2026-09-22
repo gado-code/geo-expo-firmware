@@ -214,7 +214,27 @@ static SX1262      g_radio = new Module(PIN_LORA_NSS, PIN_LORA_DIO1, PIN_LORA_RS
 
 static link::Key         g_key;
 static link::ReplayGuard g_guard;
-static uint16_t          g_seq = 0;
+
+/* El contador de secuencia vive en memoria RTC para que un reinicio (o el
+ * perro guardián) no lo devuelva a cero: si volviera atrás, el otro lado
+ * tomaría nuestras tramas por repeticiones y las tiraría todas. Un apagón sí
+ * lo pierde, y para eso está la resincronización de más abajo. */
+RTC_NOINIT_ATTR static uint32_t s_seqMagic;
+RTC_NOINIT_ATTR static uint16_t s_seq;
+static const uint32_t SEQ_MAGIC = 0x6E4C4B01;   // "nLK" + versión
+
+/* Si el otro lado se reinicia en frío, su contador empieza de cero y nosotros
+ * lo tomamos por repeticiones. Tras unas cuantas seguidas se da por hecho que
+ * se reinició y se le perdona el contador.
+ *
+ * Esto abre una rendija: quien pudiera grabar y repetir varias tramas
+ * seguidas lograría que le aceptáramos una repetición. Con la alternativa
+ * —no resincronizar nunca— el enlace se quedaría muerto en cuanto alguien
+ * cambiara una pila, que para un botón de pánico es bastante peor. Queda
+ * anotado a propósito, no es un descuido. */
+static const uint8_t RESYNC_AFTER = 5;
+static uint8_t  g_replayStreak = 0;
+static uint16_t g_replaySrc    = 0;
 
 static buzzer::Player    g_buzzer;
 
@@ -249,8 +269,17 @@ namespace led {
 
   void begin() { pinMode(PIN_LED, OUTPUT); digitalWrite(PIN_LED, LOW); }
 
-  /* Parpadeo continuo (0 = apagarlo). */
-  void blink(uint16_t periodMs) { s_blinkMs = periodMs; s_blinkT0 = millis(); }
+  /* Parpadeo continuo (0 = apagarlo).
+   *
+   * OJO con el early return: el buscador llama a esto en CADA vuelta de
+   * loop() con el periodo de la zona actual. Si se reiniciara el cronómetro
+   * en cada llamada, el LED no llegaría nunca a cambiar de estado y se
+   * quedaría fijo. Sólo se reinicia cuando el periodo cambia de verdad. */
+  void blink(uint16_t periodMs) {
+    if (periodMs == s_blinkMs) return;
+    s_blinkMs = periodMs;
+    s_blinkT0 = millis();
+  }
 
   /* Destello puntual: "acabo de recibir/mandar algo". */
   void pulse(uint16_t ms) { s_pulseOn = true; s_pulseUntil = millis() + ms; }
@@ -457,7 +486,7 @@ static bool sendFrame(link::Type type, uint8_t aux0 = 0, uint8_t aux1 = 0) {
   f.type    = type;
   f.src     = MY_ID;
   f.dst     = PEER_ID;
-  f.seq     = g_seq;
+  f.seq     = s_seq;
   f.flags   = g_state_flags;
   f.battery = g_battery;
   f.lat1e7  = g_lat1e7;
@@ -470,7 +499,7 @@ static bool sendFrame(link::Type type, uint8_t aux0 = 0, uint8_t aux1 = 0) {
   if (n == 0) return false;
   if (!radio::send(buf, n)) return false;
 
-  ++g_seq;   // sólo avanza si de verdad salió: así el otro lado no ve huecos
+  ++s_seq;   // sólo avanza si de verdad salió: así el otro lado no ve huecos
   Serial.printf("[t=%8lu ms] >>> TX  %-6s seq=%u aux0=%u flags=0x%02X\n",
                 (unsigned long)millis(), link::typeName(type),
                 (unsigned)f.seq, (unsigned)aux0, (unsigned)f.flags);
@@ -589,13 +618,22 @@ static void setFastRate(bool fast) {
                 (unsigned long)millis(), (unsigned long)g_beaconEveryMs);
 }
 
+/* Arranca un envío con acuse de recibo. `code` es 1 (pulsación corta), 2
+ * (prolongada) o 0 (cancelación).
+ *
+ * La CANCELACIÓN pasa por aquí a propósito: antes se mandaba una sola vez y,
+ * si la radio estaba ocupada en ese instante, se perdía sin más. Entonces el
+ * buscador seguía con la alarma puesta por algo que el usuario ya había
+ * anulado, que es la peor forma posible de fallar. */
 static void startAlert(uint8_t code) {
   g_alertPending = true;
   g_alertCode    = code;
   g_alertTries   = 0;
   g_tAlertSent   = 0;                  // fuerza el primer envío en este mismo tick
-  g_state_flags |= link::Flag::ALERT_ACTIVE;
-  setFastRate(true);                   // con alerta activa, posición más seguido
+  if (code != 0) {
+    g_state_flags |= link::Flag::ALERT_ACTIVE;
+    setFastRate(true);                 // con alerta activa, posición más seguido
+  }
 }
 
 static void clearAlert(const char* why) {
@@ -621,7 +659,7 @@ static void tagButton(uint32_t now) {
     case panic::Event::CANCEL:
       snd::play(buzzer::PATTERN_CANCEL);
       clearAlert("CANCEL: alerta anulada por el usuario");
-      sendFrame(link::Type::ALERT, /*aux0=*/0);   // 0 = cancelación
+      startAlert(0);          // se reintenta hasta que el buscador la confirme
       break;
     case panic::Event::WINDOW_EXPIRED:
       snd::play(buzzer::PATTERN_CONFIRMED);
@@ -646,7 +684,9 @@ static void tagRadio(uint32_t now) {
   if (g_alertPending) {
     if (g_tAlertSent == 0 || (now - g_tAlertSent) >= ALERT_RETRY_MS) {
       if (g_alertTries >= ALERT_MAX_RETRIES) {
-        clearAlert("ALERTA: sin respuesta del buscador tras todos los reintentos");
+        clearAlert(g_alertCode == 0
+                       ? "CANCELACION: sin respuesta del buscador tras todos los reintentos"
+                       : "ALERTA: sin respuesta del buscador tras todos los reintentos");
         snd::play(buzzer::PATTERN_LINK_LOST);
       } else if (sendFrame(link::Type::ALERT, g_alertCode)) {
         ++g_alertTries;
@@ -673,8 +713,10 @@ static void tagOnFrame(const link::Frame& f, float rssi, float snr) {
   switch (f.type) {
     case link::Type::ACK:
       if (g_alertPending) {
+        const bool eraCancelacion = (g_alertCode == 0);
         g_alertPending = false;
-        trace("ALERTA CONFIRMADA por el buscador (ACK recibido)");
+        trace(eraCancelacion ? "CANCELACION CONFIRMADA por el buscador (ACK recibido)"
+                             : "ALERTA CONFIRMADA por el buscador (ACK recibido)");
         snd::play(buzzer::PATTERN_CONFIRMED);
       }
       break;
@@ -687,7 +729,14 @@ static void tagOnFrame(const link::Frame& f, float rssi, float snr) {
         case link::Cmd::FIND_ON:  setFind(true);  break;
         case link::Cmd::FIND_OFF: setFind(false); break;
         case link::Cmd::FAST_ON:  setFastRate(true);  break;
-        case link::Cmd::FAST_OFF: setFastRate(false); break;
+        case link::Cmd::FAST_OFF:
+          /* Volver a la cadencia de ahorro es también la forma que tiene el
+           * buscador de decir "ya está atendido": si no, el llavero se
+           * quedaría marcando alerta y gastando batería para siempre, porque
+           * el ACK sólo dice "me llegó", no "ya pasó". */
+          clearAlert("ALERTA cerrada por el buscador");
+          setFastRate(false);
+          break;
         case link::Cmd::WHERE:    break;   // se responde abajo con un STATUS
         default: break;
       }
@@ -724,10 +773,36 @@ static inline bool buttonPressed() {
 #endif
 }
 
+/* Cola de órdenes.
+ *
+ * La radio sólo puede estar transmitiendo una cosa a la vez, así que dos
+ * órdenes seguidas (FIND_ON + FAST_ON, que es justo lo que hace el modo
+ * búsqueda) perdían la segunda por el camino: `sendFrame` devolvía false y
+ * nadie se enteraba. Ahora se encolan y salen en cuanto la radio queda libre,
+ * respetando además un hueco entre envíos para no pisarse a sí mismas. */
+static const uint8_t  CMD_QUEUE_LEN = 6;
+static const uint32_t CMD_GAP_MS    = 250;
+static link::Cmd g_cmdQueue[CMD_QUEUE_LEN];
+static uint8_t   g_cmdCount = 0;
+static uint32_t  g_tLastCmd = 0;
+
 static void finderSendCmd(link::Cmd c) {
-  sendFrame(link::Type::CMD, (uint8_t)c);
-  Serial.printf("[t=%8lu ms] ORDEN enviada: %s\n",
+  if (g_cmdCount >= CMD_QUEUE_LEN) {
+    trace("ORDEN descartada: la cola esta llena (la radio no da mas de si)");
+    return;
+  }
+  g_cmdQueue[g_cmdCount++] = c;
+  Serial.printf("[t=%8lu ms] ORDEN encolada: %s\n",
                 (unsigned long)millis(), link::cmdName(c));
+}
+
+static void finderCmdQueue(uint32_t now) {
+  if (g_cmdCount == 0 || radio::busy()) return;
+  if ((now - g_tLastCmd) < CMD_GAP_MS)  return;
+  if (!sendFrame(link::Type::CMD, (uint8_t)g_cmdQueue[0])) return;
+  g_tLastCmd = now;
+  for (uint8_t i = 1; i < g_cmdCount; ++i) g_cmdQueue[i - 1] = g_cmdQueue[i];
+  --g_cmdCount;
 }
 
 static void setFindMode(bool on) {
@@ -850,9 +925,16 @@ static void handleCommand(const char* raw) {
   } else if (strcmp(cmd, "FIND") == 0) {
     setFindMode(true);
   } else if (strcmp(cmd, "STOP") == 0) {
+    /* Si había una alarma, se le dice al llavero que ya está atendida aunque
+     * no estuviéramos en modo búsqueda: si no, se quedaría marcando alerta y
+     * balizando rápido hasta quedarse sin batería. */
+    const bool habiaAlarma = g_alarmOn;
     setFindMode(false);
     g_alarmOn = false;
     snd::stop();
+    led::blink(0);
+    if (habiaAlarma && !g_findMode) finderSendCmd(link::Cmd::FAST_OFF);
+    trace("Alarma atendida");
   } else if (strcmp(cmd, "WHERE") == 0) {
     finderSendCmd(link::Cmd::WHERE);
   } else if (strcmp(cmd, "FAST") == 0) {
@@ -1005,6 +1087,10 @@ void setup() {
 
   g_key = link::keyFromString(GEO_LINK_KEY);
   g_guard.reset();
+  if (s_seqMagic != SEQ_MAGIC) {   // arranque en frío: la RTC trae basura
+    s_seqMagic = SEQ_MAGIC;
+    s_seq      = 0;
+  }
 
   printBanner();
   gps::begin();
@@ -1049,8 +1135,19 @@ void loop() {
       ++g_rxBad;
       Serial.printf("[t=%8lu ms] RX descartada: repetida (src 0x%04X seq %u)\n",
                     (unsigned long)now, (unsigned)f.src, (unsigned)f.seq);
+      // Varias seguidas del mismo emisor = se ha reiniciado, no es un ataque.
+      if (f.src == g_replaySrc) { ++g_replayStreak; }
+      else                      { g_replaySrc = f.src; g_replayStreak = 1; }
+      if (g_replayStreak >= RESYNC_AFTER) {
+        g_guard.forget(f.src);
+        g_replayStreak = 0;
+        Serial.printf("[t=%8lu ms] El emisor 0x%04X parece haberse reiniciado:"
+                      " se resincroniza el contador\n",
+                      (unsigned long)now, (unsigned)f.src);
+      }
     } else {
       ++g_rxOk;
+      g_replayStreak = 0;
       g_tLastHeard   = now;
       g_everHeard    = true;
       g_linkLostSaid = false;
@@ -1075,6 +1172,7 @@ void loop() {
   tagRadio(now);
 #else
   g_est.update(now);
+  finderCmdQueue(now);
   finderBeeps(now);
 
   // El botón PRG del buscador entra y sale del modo búsqueda (flanco, con
@@ -1086,8 +1184,17 @@ void loop() {
     tBtn    = now;
     lastBtn = nowBtn;
     if (nowBtn) {
-      if (g_alarmOn) { g_alarmOn = false; snd::stop(); led::blink(0); trace("Alarma silenciada"); }
-      else           { setFindMode(!g_findMode); }
+      if (g_alarmOn) {
+        // Mismo criterio que el comando STOP: silenciar la alarma es decirle
+        // al llavero que ya está atendida.
+        g_alarmOn = false;
+        snd::stop();
+        led::blink(0);
+        finderSendCmd(link::Cmd::FAST_OFF);
+        trace("Alarma atendida desde el boton");
+      } else {
+        setFindMode(!g_findMode);
+      }
     }
   }
 

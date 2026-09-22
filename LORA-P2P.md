@@ -34,6 +34,22 @@ con una vuelta de tuerca: aquí el llavero **también puede gritar**.
   reintenta no es una alerta, es un deseo.
 - **Obedece al buscador**: ponerse a pitar (`FIND_ON`), callarse (`FIND_OFF`),
   mandar posición ahora (`WHERE`), cambiar la cadencia (`FAST_ON`/`FAST_OFF`).
+- **La cancelación también se reintenta.** Si se mandara una sola vez y la
+  radio estuviera ocupada en ese instante, el buscador se quedaría con la
+  alarma puesta por algo que el usuario ya había anulado.
+
+### Quién cierra una alerta
+
+Conviene tenerlo claro porque son dos cosas distintas:
+
+| Mensaje | Significa | Efecto en el llavero |
+|---|---|---|
+| `ACK` | "me ha llegado" | Deja de reintentar |
+| `FAST_OFF` (o `STOP` en el buscador) | "ya está atendida" | Cierra la alerta y vuelve a la baliza lenta |
+
+Un `ACK` **no** cierra la alerta: mientras nadie diga que está atendida, el
+llavero sigue marcando alerta y balizando rápido, que es lo que se quiere en
+una emergencia de verdad. El `STOP` del buscador manda el `FAST_OFF` solo.
 
 ### El buscador (FINDER)
 
@@ -247,6 +263,6 @@ que es justo lo que no conviene en una alerta que se reintenta.
 | `RADIO: fallo al arrancar (codigo -11)` | Frecuencia fuera de la banda del módulo: revisa `LORA_FREQ_MHZ`. |
 | Todo parece transmitir pero el otro no oye nada | Falta `setDio2AsRfSwitch(true)` (ya está en el código) o, más probable, **la antena**. También: claves distintas, frecuencias distintas o `sync word` distinta. |
 | `RX descartada: firma invalida` | Las dos placas no llevan la misma `GEO_LINK_KEY`. |
-| `RX descartada: repetida` | Normal si reinicias una placa sin reiniciar la otra: el contador vuelve atrás. Se arregla solo al reiniciar las dos, o reiniciando el buscador. |
+| `RX descartada: repetida` | Pasa si una placa arranca en frío y su contador vuelve a cero. **Se arregla solo**: tras cinco tramas rechazadas seguidas del mismo emisor, el otro lado da por hecho que se reinició y resincroniza (lo dice en el log). El contador vive en memoria RTC, así que un reset normal —o del perro guardián— no lo pierde; sólo un apagón. |
 | La distancia dice disparates | Sin calibrar (§6). Y recuerda que el RSSI cambia mucho si la placa va en un bolsillo. |
 | El buscador no pita | ¿Hay zumbador cableado y `-D PIN_BUZZER_CFG` descomentado? ¿`MUTE:ON` activo? ¿Zona `SIN SENAL`? |
