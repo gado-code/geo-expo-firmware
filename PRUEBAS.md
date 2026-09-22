@@ -8,9 +8,9 @@ Placa: ESP32 DevKit V1 · Firmware: `src/main.cpp` · Última sesión con la pla
 > conserva las observaciones del 9-sep; lo medido el 18-sep está en la §0-ter
 > para no borrar el histórico.
 >
-> ⚠️ **Lo del 19-sep (botón externo, buzzer y tres arreglos de BLE/comandos)
-> vuelve a estar sin probar en la placa**: el binario cambió, así que hay que
-> repetir los 10 arranques de la I12 y la §3-ter.
+> ✅ **22-sep: el binario del botón externo ya pasó los 10 arranques de la I12**
+> y las pruebas de la §3-ter que no necesitan dedo. Lo que falta es pulsar el
+> **botón físico** (3c.3, 3c.4 y 1.7 con un pulsador de verdad).
 
 Marca cada casilla: **x** = pasado con registro · *?* = dado por bueno sin log · ☐ = sin probar.
 Monitor serie a **115200 bps**. App móvil: **nRF Connect for Mobile**.
@@ -183,20 +183,20 @@ el BOOT funcionando en paralelo (`pulsado = BOOT || externo`). El buzzer está
 implementado pero **apagado** (`-D BUZZER_ENABLED=1` para encenderlo). Detalle
 y cableado en el README §2-bis.
 
-| # | Caso | Procedimiento | Resultado esperado | OK |
-|---|---|---|---|:--:|
-| 3c.1 | Pin al aire no dispara nada | Sin cablear nada en GPIO4, dejar la placa quieta 60 s | Ni una transición de la FSM: con `INPUT_PULLUP` un pin al aire lee HIGH | ☐ |
-| 3c.2 | Banner | Arrancar y leer el banner | Dice `Pulsador externo : GPIO4` y `Buzzer : desactivado` | ☐ |
-| 3c.3 | El pulsador externo alerta | Cablear GPIO4 → pulsador → GND y pulsar corto | `ALERT:1` exactamente igual que con BOOT | ☐ |
-| 3c.4 | Pulsación larga por el externo | Mantener el pulsador 3 s | `ALERT:2` a los 3000 ms | ☐ |
-| 3c.5 | Guarda de pines peligrosos | `PLATFORMIO_BUILD_FLAGS="-D EXT_BUTTON_PIN=5" pio run -e devkit_v1` | **No compila**: `#error ... es un strapping pin (0/2/5/12/15)` | **x** |
-| 3c.6 | BOOT desactivable (I10) | Compilar con `-D BOOT_BUTTON_ENABLED=0` y abrir un terminal con DTR activo | El DTR ya no genera alertas fantasma; solo responde el pulsador externo | ☐ |
-| 3c.7 | Buzzer suena | Con `-D BUZZER_ENABLED=1` y el piezo en GPIO25, mandar `BEACON:ON` | Pita a 2 Hz a la vez que el LED | ☐ |
-| 3c.8 | El buzzer no estropea el LED | Con el buzzer activo, mirar el parpadeo del LED | El LED sigue igual: el buzzer usa el canal LEDC **0** y el LED el **15**, que están en timers distintos | ☐ |
-| 3c.9 | Trama NMEA con minúsculas | Inyectar una trama con minúsculas y checksum correcto | **ACEPTADA** (antes se descartaba: el comando pasaba la trama a mayúsculas y eso cambia el XOR) | ☐ |
-| 3c.10 | Log honesto de TX | Conectar un móvil **sin** suscribirse a TX y pulsar | `(cliente conectado pero SIN suscribirse a TX: NO lo recibe)` en vez del viejo `(enviado por BLE)` | ☐ |
-| 3c.11 | Sigue visible con un cliente (I16) | Con un móvil conectado, escanear desde otro | El llavero **sigue apareciendo**: ahora el advertising se relanza al conectar | ☐ |
-| 3c.12 | 10 arranques con el binario nuevo | `tools/hw.py` con 10 resets | 10 de 10 con `init() completado` (obligatorio: el binario cambió, y la I12 depende del layout) | ☐ |
+| # | Caso | Procedimiento | Resultado esperado | OK | Observaciones |
+|---|---|---|---|:--:|---|
+| 3c.1 | El pin no dispara nada solo | Placa quieta 60 s | Ni una transición de la FSM | **x** | 60 s sin un solo evento. La placa respondía a `POS` justo después, así que el silencio es real y no un cuelgue. |
+| 3c.2 | Banner | Arrancar y leer el banner | Dice `Pulsador externo : GPIO4` y `Buzzer : desactivado` | **x** | Con `-D BOOT_BUTTON_ENABLED=0` sale `Boton BOOT en GPIO0 (DESACTIVADO)` y la ayuda dice que el botón es el externo. |
+| 3c.3 | El pulsador externo alerta | Cablear GPIO4 → pulsador → GND y pulsar corto | `ALERT:1` exactamente igual que con BOOT | ☐ | |
+| 3c.4 | Pulsación larga por el externo | Mantener el pulsador 3 s | `ALERT:2` a los 3000 ms | ☐ | |
+| 3c.5 | Guarda de pines peligrosos | `PLATFORMIO_BUILD_FLAGS="-D EXT_BUTTON_PIN=5" pio run -e devkit_v1` | **No compila**: `#error ... es un strapping pin (0/2/5/12/15)` | **x** | |
+| 3c.6 | BOOT desactivable (I10) | Compilar con `-D BOOT_BUTTON_ENABLED=0` y activar DTR | El DTR ya no genera alertas fantasma | **x** | DTR activo **6 s** (el doble del umbral de 3 s): ni `ALERT:2` ni una sola transición. Antes esto disparaba la alerta fantasma. |
+| 3c.7 | Buzzer suena | Con `-D BUZZER_ENABLED=1` y el piezo en GPIO25, mandar `BEACON:ON` | Pita a 2 Hz a la vez que el LED | ☐ | |
+| 3c.8 | El buzzer no estropea el LED | Con el buzzer activo, mirar el parpadeo del LED | El LED sigue igual: el buzzer usa el canal LEDC **0** y el LED el **15**, que están en timers distintos | ☐ | |
+| 3c.9 | Trama NMEA con minúsculas | Inyectar una trama con minúsculas y checksum correcto | **ACEPTADA** (antes se descartaba: el comando pasaba la trama a mayúsculas y eso cambia el XOR) | ☐ | |
+| 3c.10 | Log honesto de TX | Conectar un móvil **sin** suscribirse a TX y pulsar | `(cliente conectado pero SIN suscribirse a TX: NO lo recibe)` en vez del viejo `(enviado por BLE)` | ☐ | |
+| 3c.11 | Sigue visible con un cliente (I16) | Con un móvil conectado, escanear desde otro | El llavero **sigue apareciendo**: ahora el advertising se relanza al conectar | ☐ | |
+| 3c.12 | 10 arranques con el binario nuevo | `tools/hw.py` con 10 resets | 10 de 10 con `init() completado` | **x** | **10 de 10 limpios** el 22-sep con el binario del botón externo (Flash 46,0 %). `rst:0x1` siempre, ningún `TG1WDT`. `init()` completa entre **424 y 437 ms** en los diez. |
 
 ---
 
