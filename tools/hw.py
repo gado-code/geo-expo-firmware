@@ -37,6 +37,11 @@ ser.port, ser.baudrate, ser.timeout = port, 115200, 0.05
 ser.dtr = False
 ser.rts = False
 ser.open()
+# Al abrir, el buffer del driver puede traer restos de una sesion anterior.
+# Si no se vacia, la primera lectura devuelve basura repetida (paso de verdad:
+# 10.609 lineas identicas en 2 ms, imposibles a 115200 baudios).
+ser.reset_input_buffer()
+ser.reset_output_buffer()
 
 stop = False
 
