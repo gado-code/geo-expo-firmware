@@ -34,12 +34,13 @@ export function Button({
 }) {
   const p = usePalette();
   const fill = kind === 'primary' ? p.primary : kind === 'danger' ? p.danger : undefined;
-  const textTone = fill || onDark ? 'inverse' : kind === 'plain' ? 'brand' : 'primary';
+  const textTone =
+    kind === 'primary' ? 'onPrimary' : kind === 'danger' || onDark ? 'inverse' : kind === 'plain' ? 'brand' : 'primary';
   const height = large ? 60 : 50;
 
   const content = (
     <View style={styles.row}>
-      {loading ? <ActivityIndicator color={fill || onDark ? '#fff' : p.text} /> : icon}
+      {loading ? <ActivityIndicator color={kind === 'primary' ? p.onPrimary : fill || onDark ? '#fff' : p.text} /> : icon}
       <Text variant="headline" tone={textTone} style={large && { fontSize: 19 }}>
         {title}
       </Text>
@@ -66,7 +67,7 @@ export function Button({
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
-      android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: false }}
+      android_ripple={{ color: kind === 'primary' ? 'rgba(43,28,0,0.14)' : 'rgba(255,255,255,0.25)', borderless: false }}
       style={({ pressed }) => [
         styles.base,
         {

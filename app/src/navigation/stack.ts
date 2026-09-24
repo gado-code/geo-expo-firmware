@@ -19,7 +19,7 @@ export function largeTitleOptions(p: Palette): Options {
     headerStyle: { backgroundColor: Platform.OS === 'ios' ? 'transparent' : p.background },
     headerTitleStyle: { color: p.text },
     headerLargeTitleStyle: { color: p.text },
-    headerTintColor: p.primary,
+    headerTintColor: p.accent,
     contentStyle: { backgroundColor: p.background },
   };
 }

@@ -25,7 +25,7 @@ export default function Ajustes() {
         <ListRow
           leading={
             <IconBadge color={p.primary}>
-              <Icon ios="sensor.tag.radiowaves.forward.fill" android="sensors" size={16} color="#fff" />
+              <Icon ios="sensor.tag.radiowaves.forward.fill" android="sensors" size={16} color={p.onPrimary} />
             </IconBadge>
           }
           title={link.deviceName ?? 'Ningún llavero vinculado'}
@@ -72,7 +72,7 @@ export default function Ajustes() {
                 style={[styles.segmentItem, on && { backgroundColor: p.primary }]}
                 accessibilityState={{ selected: on }}
               >
-                <Text variant="callout" tone={on ? 'inverse' : 'primary'} style={{ fontWeight: '600' }}>
+                <Text variant="callout" tone={on ? 'onPrimary' : 'primary'} style={{ fontWeight: '600' }}>
                   {s} s
                 </Text>
               </Pressable>
@@ -131,8 +131,8 @@ export default function Ajustes() {
       <Section title="Experiencia">
         <ListRow
           leading={
-            <IconBadge color={brand.secondary}>
-              <Icon ios="waveform" android="vibration" size={15} color="#fff" />
+            <IconBadge color={p.pastel}>
+              <Icon ios="waveform" android="vibration" size={15} color={p.onPrimary} />
             </IconBadge>
           }
           title="Vibración"
@@ -184,7 +184,7 @@ export default function Ajustes() {
       </Section>
 
       <Text variant="footnote" tone="tertiary" style={{ textAlign: 'center' }}>
-        {brand.name} {brand.product} · v{Constants.expoConfig?.version ?? '1.0.0'}
+        {brand.name} · v{Constants.expoConfig?.version ?? '1.0.0'}
       </Text>
     </Screen>
   );

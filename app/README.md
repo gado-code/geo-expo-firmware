@@ -1,6 +1,6 @@
-# GEO-EXPO Alert · App móvil (iPhone y Android)
+# Ivy · App móvil (iPhone y Android)
 
-La app del llavero. Un solo código (Expo / React Native, SDK 57) que se compila
+La app del llavero **Ivy**. Un solo código (Expo / React Native, SDK 57) que se compila
 como app **nativa** para iPhone y para Android. Habla con el firmware de este
 repositorio siguiendo **[`../INTEGRACION-APP.md`](../INTEGRACION-APP.md)** al pie
 de la letra.
@@ -42,18 +42,24 @@ plano, el aviso de «Alerta confirmada» sale igual, y se anula si llega `CANCEL
   canal de notificaciones de máxima prioridad.
 - **Modo claro y oscuro** automáticos.
 
-## Branding (pendiente)
+## Branding
 
-Todo el color sale de **un solo archivo**: [`src/theme/brand.ts`](src/theme/brand.ts).
-El logo provisional es [`src/components/BrandMark.tsx`](src/components/BrandMark.tsx)
-(se usa en la barra inferior, en Inicio, en Vincular y en la alerta). Cuando
-llegue el branding:
+**Ivy**, en **ámbar** (`#F5A30B`) y **amarillo pastel** (`#FFE9A3`). Todo el
+color sale de **un solo archivo**: [`src/theme/brand.ts`](src/theme/brand.ts).
 
-1. Cambiar los colores de `brand.ts` (y el tono del indicador de Android en
-   `src/app/(tabs)/_layout.tsx`).
-2. Sustituir `BrandMark` por el logo (PNG/SVG) al mismo tamaño.
-3. Reemplazar `assets/icon.png`, `assets/splash-icon.png` y los
-   `assets/android-icon-*.png`.
+- Sobre el ámbar el texto va en **tinta oscura** (`#2B1C00`), no en blanco: el
+  blanco sobre ámbar no se lee bien. Como texto o icono sobre fondo claro se usa
+  un ámbar más oscuro (`#A86200`), y sobre fondo oscuro uno más claro
+  (`#FFC247`).
+- El rojo de las alertas se mantiene a propósito: una alerta tiene que asustar.
+- El logo es **provisional** (un llavero con su botón):
+  [`src/components/BrandMark.tsx`](src/components/BrandMark.tsx) y los PNG de
+  `assets/` (icono, splash, icono adaptativo de Android). Cuando llegue el logo
+  definitivo se sustituyen esos dos sitios.
+- Identificador de la app: `com.ivy.app` (en `app.json`). Hay que confirmarlo
+  antes de publicar: en las tiendas tiene que ser único.
+- El llavero sigue anunciándose como `GEOEXPO-ALERT` porque ese nombre lo pone el
+  firmware; la app no filtra por nombre, así que da igual para conectar.
 
 ## Cómo probarla
 

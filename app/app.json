@@ -1,14 +1,14 @@
 {
   "expo": {
-    "name": "GEO-EXPO Alert",
-    "slug": "geo-expo-alert",
-    "scheme": "geoexpo",
+    "name": "Ivy",
+    "slug": "ivy",
+    "scheme": "ivy",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "bundleIdentifier": "com.geoexpo.alert",
+      "bundleIdentifier": "com.ivy.app",
       "supportsTablet": false,
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Tu ubicación se envía a tus contactos de emergencia cuando se confirma una alerta.",
@@ -19,9 +19,9 @@
       }
     },
     "android": {
-      "package": "com.geoexpo.alert",
+      "package": "com.ivy.app",
       "adaptiveIcon": {
-        "backgroundColor": "#2E6BFF",
+        "backgroundColor": "#F5A30B",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -42,9 +42,9 @@
         {
           "image": "./assets/splash-icon.png",
           "imageWidth": 160,
-          "backgroundColor": "#F2F3F7",
+          "backgroundColor": "#FFFBF2",
           "dark": {
-            "backgroundColor": "#07080C"
+            "backgroundColor": "#0D0B07"
           }
         }
       ],
@@ -58,7 +58,7 @@
             "central"
           ],
           "neverForLocation": true,
-          "bluetoothAlwaysPermission": "La app se conecta por Bluetooth a tu llavero GEO-EXPO para recibir sus alertas, también en segundo plano."
+          "bluetoothAlwaysPermission": "Ivy se conecta por Bluetooth a tu llavero para recibir sus alertas, también en segundo plano."
         }
       ],
       [

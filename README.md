@@ -18,7 +18,7 @@ El firmware:
 Como todavía no hay buzzer, la **baliza se simula** parpadeando el LED de GPIO2
 a 2 Hz e imprimiendo en serie.
 
-> 📱 **La app móvil (iPhone y Android) está en [`app/`](app/README.md).** Habla
+> 📱 **La app móvil, Ivy (iPhone y Android), está en [`app/`](app/README.md).** Habla
 > con este firmware siguiendo [`INTEGRACION-APP.md`](INTEGRACION-APP.md).
 
 ---

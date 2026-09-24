@@ -1,5 +1,5 @@
 /**
- * Contrato BLE con el llavero GEO-EXPO ALERT.
+ * Contrato BLE con el llavero Ivy (firmware GEO-EXPO ALERT).
  *
  * Fuente de verdad: ../../INTEGRACION-APP.md (congelado y verificado en hardware).
  * Este módulo es TypeScript puro, sin React Native, para poder probarlo con
@@ -13,6 +13,7 @@ export const NUS_TX = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E';
 /** App → dispositivo (WRITE / WRITE_NO_RESPONSE). */
 export const NUS_RX = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E';
 
+/** Nombre que anuncia el firmware actual. No se usa para filtrar (§2). */
 export const DEVICE_NAME = 'GEOEXPO-ALERT';
 
 /** MTU a pedir nada más conectar (§6): el mensaje con GPS no cabe en 20 bytes. */

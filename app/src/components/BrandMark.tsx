@@ -4,7 +4,7 @@ import { StyleSheet, View } from 'react-native';
 import { brand } from '@/theme';
 
 /**
- * LOGO PROVISIONAL: un llavero (anilla + mando con su botón).
+ * LOGO PROVISIONAL DE IVY: un llavero (anilla + mando con su botón), en ámbar.
  * Cuando llegue el logo definitivo, sustituye este componente por un
  * <Image source={require('@/../assets/brand/logo.png')} /> del mismo tamaño;
  * se usa en la barra inferior (iOS), en Inicio, en la vinculación y en la alerta.
@@ -17,7 +17,7 @@ export function BrandMark({ size = 36, pulse = false }: { size?: number; pulse?:
   const button = fobW * 0.52;
   return (
     <LinearGradient
-      colors={[brand.primary, brand.secondary]}
+      colors={['#FFD95A', brand.primary]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={[styles.tile, { width: size, height: size, borderRadius: size * 0.3 }]}
@@ -32,7 +32,7 @@ export function BrandMark({ size = 36, pulse = false }: { size?: number; pulse?:
           height: ring,
           borderRadius: ring / 2,
           borderWidth: stroke,
-          borderColor: 'rgba(255,255,255,0.9)',
+          borderColor: brand.onPrimary,
         }}
       />
       {/* mando */}
@@ -44,7 +44,7 @@ export function BrandMark({ size = 36, pulse = false }: { size?: number; pulse?:
           width: fobW,
           height: fobH,
           borderRadius: fobW * 0.42,
-          backgroundColor: '#FFFFFF',
+          backgroundColor: '#FFFBF2',
           alignItems: 'center',
           justifyContent: 'center',
           transform: [{ rotate: '-18deg' }],
@@ -55,7 +55,7 @@ export function BrandMark({ size = 36, pulse = false }: { size?: number; pulse?:
             width: button,
             height: button,
             borderRadius: button / 2,
-            backgroundColor: pulse ? brand.danger : brand.primary,
+            backgroundColor: pulse ? brand.danger : brand.onPrimary,
           }}
         />
       </View>

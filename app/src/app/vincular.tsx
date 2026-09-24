@@ -72,7 +72,7 @@ export default function Vincular() {
                 {i > 0 && <RowSeparator />}
                 <ListRow
                   leading={<BrandMark size={32} />}
-                  title={d.name ?? 'GEOEXPO-ALERT'}
+                  title={d.name ?? 'Llavero Ivy'}
                   subtitle={`${proximity(d.rssi)}${d.id === link.deviceId ? ' · vinculado' : ''}`}
                   chevron
                   onPress={async () => {

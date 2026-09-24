@@ -3,7 +3,7 @@ import { Text as RNText, type TextProps } from 'react-native';
 import { usePalette } from '@/theme';
 
 type Variant = 'hero' | 'title' | 'headline' | 'body' | 'callout' | 'footnote' | 'caption';
-type Tone = 'primary' | 'secondary' | 'tertiary' | 'brand' | 'danger' | 'success' | 'inverse';
+type Tone = 'primary' | 'secondary' | 'tertiary' | 'brand' | 'danger' | 'success' | 'inverse' | 'onPrimary';
 
 const sizes: Record<Variant, { fontSize: number; lineHeight: number; fontWeight: '400' | '500' | '600' | '700' | '800' }> = {
   hero: { fontSize: 34, lineHeight: 40, fontWeight: '800' },
@@ -26,10 +26,11 @@ export function Text({
     primary: p.text,
     secondary: p.textSecondary,
     tertiary: p.textTertiary,
-    brand: p.primary,
+    brand: p.accent,
     danger: p.danger,
     success: p.success,
     inverse: '#FFFFFF',
+    onPrimary: p.onPrimary,
   }[tone];
   return <RNText {...rest} style={[sizes[variant], { color }, style]} />;
 }

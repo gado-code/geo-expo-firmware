@@ -81,7 +81,7 @@ function HistoryRow({ entry: h, p }: { entry: HistoryEntry; p: Palette }) {
       title={`${h.level === 2 ? 'Alerta prolongada' : 'Alerta'}${h.source === 'demo' ? ' (prueba)' : ''}`}
       subtitle={`${how} · ${time}`}
       trailing={
-        h.position ? <Icon ios="map.fill" android="map" size={18} color={p.primary} /> : undefined
+        h.position ? <Icon ios="map.fill" android="map" size={18} color={p.accent} /> : undefined
       }
       onPress={h.position ? () => void Linking.openURL(mapsLink(h.position!)) : undefined}
     />

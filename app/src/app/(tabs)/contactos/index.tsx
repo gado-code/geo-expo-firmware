@@ -30,7 +30,7 @@ export default function Contactos() {
             <View key={c.id}>
               {i > 0 && <RowSeparator />}
               <ListRow
-                leading={<Avatar name={c.name} color={p.primary} />}
+                leading={<Avatar name={c.name} color={p.pastel} ink={p.onPrimary} />}
                 title={c.name}
                 subtitle={c.phone}
                 chevron
@@ -43,7 +43,7 @@ export default function Contactos() {
 
       <Button
         title="Añadir contacto"
-        icon={<Icon ios="plus" android="add" size={18} color="#fff" weight="bold" />}
+        icon={<Icon ios="plus" android="add" size={18} color={p.onPrimary} weight="bold" />}
         onPress={() => router.push('/contacto')}
       />
 
@@ -55,7 +55,7 @@ export default function Contactos() {
   );
 }
 
-function Avatar({ name, color }: { name: string; color: string }) {
+function Avatar({ name, color, ink }: { name: string; color: string; ink: string }) {
   const initials = name
     .split(/\s+/)
     .filter(Boolean)
@@ -64,7 +64,7 @@ function Avatar({ name, color }: { name: string; color: string }) {
     .join('');
   return (
     <View style={[styles.avatar, { backgroundColor: color }]}>
-      <Text variant="callout" tone="inverse" style={{ fontWeight: '700' }}>
+      <Text variant="callout" style={{ fontWeight: '700', color: ink }}>
         {initials || '?'}
       </Text>
     </View>

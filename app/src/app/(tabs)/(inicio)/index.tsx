@@ -10,7 +10,7 @@ import { describeLink } from '@/components/linkStatus';
 import { Screen } from '@/components/Screen';
 import { Text } from '@/components/Text';
 import { useKeychain } from '@/state/KeychainProvider';
-import { usePalette } from '@/theme';
+import { brand, usePalette } from '@/theme';
 
 export default function Inicio() {
   const p = usePalette();
@@ -34,7 +34,7 @@ export default function Inicio() {
             </Text>
           </View>
           <Text variant="title" style={{ textAlign: 'center' }}>
-            {link.deviceName ?? 'GEO-EXPO Alert'}
+            {link.deviceName ?? brand.name}
           </Text>
           <Text variant="callout" tone="secondary" style={{ textAlign: 'center' }}>
             {st.detail}
@@ -44,7 +44,7 @@ export default function Inicio() {
         {link.status === 'unpaired' && (
           <Button
             title="Vincular llavero"
-            icon={<Icon ios="link.badge.plus" android="add" color="#fff" size={18} />}
+            icon={<Icon ios="link.badge.plus" android="add" color={p.onPrimary} size={18} />}
             onPress={() => router.push('/vincular')}
           />
         )}
@@ -55,7 +55,7 @@ export default function Inicio() {
         <QuickTile
           title={link.beacon ? 'Sonando' : 'Localizar'}
           subtitle={connected ? (link.beacon ? 'Toca para parar' : 'Haz sonar el llavero') : 'Conecta el llavero'}
-          icon={<Icon ios="speaker.wave.3.fill" android="volume_up" color="#fff" size={20} />}
+          icon={<Icon ios="speaker.wave.3.fill" android="volume_up" color={p.onPrimary} size={20} />}
           color={link.beacon ? p.warning : p.primary}
           disabled={!connected}
           onPress={() => void setBeacon(!link.beacon)}
@@ -63,8 +63,8 @@ export default function Inicio() {
         <QuickTile
           title={`${contacts.length} contacto${contacts.length === 1 ? '' : 's'}`}
           subtitle={contacts.length ? 'Recibirán tu alerta' : 'Añade a quién avisar'}
-          icon={<Icon ios="person.2.fill" android="group" color="#fff" size={20} />}
-          color={contacts.length ? p.secondary : p.danger}
+          icon={<Icon ios="person.2.fill" android="group" color={contacts.length ? p.onPrimary : '#fff'} size={20} />}
+          color={contacts.length ? p.pastel : p.danger}
           onPress={() => router.navigate('/contactos')}
         />
       </View>
@@ -74,7 +74,7 @@ export default function Inicio() {
         <Text variant="headline" style={{ marginBottom: 12 }}>
           Cómo usar el botón
         </Text>
-        <Step n="1" title="Pulsa una vez" text="Empieza una alerta con 10 s para arrepentirte." color={p.primary} />
+        <Step n="1" title="Pulsa una vez" text="Empieza una alerta con 10 s para arrepentirte." color={p.primary} ink={p.onPrimary} />
         <Step n="2" title="Mantén 3 segundos" text="Alerta prolongada: la situación es más grave." color={p.danger} />
         <Step n="↺" title="Pulsa otra vez antes de 10 s" text="Cancela la alerta: falsa alarma." color={p.success} last />
       </GlassCard>
@@ -97,7 +97,7 @@ export default function Inicio() {
       <Button
         kind="plain"
         title="Probar una alerta (modo demo)"
-        icon={<Icon ios="hand.tap.fill" android="touch_app" color={p.primary} size={18} />}
+        icon={<Icon ios="hand.tap.fill" android="touch_app" color={p.accent} size={18} />}
         onPress={() => simulateAlert(1)}
       />
     </Screen>
@@ -131,11 +131,25 @@ function QuickTile(props: {
   );
 }
 
-function Step({ n, title, text, color, last }: { n: string; title: string; text: string; color: string; last?: boolean }) {
+function Step({
+  n,
+  title,
+  text,
+  color,
+  ink = '#fff',
+  last,
+}: {
+  n: string;
+  title: string;
+  text: string;
+  color: string;
+  ink?: string;
+  last?: boolean;
+}) {
   return (
     <View style={[styles.step, !last && { marginBottom: 14 }]}>
       <View style={[styles.stepNum, { backgroundColor: color }]}>
-        <Text variant="callout" tone="inverse" style={{ fontWeight: '700' }}>
+        <Text variant="callout" style={{ fontWeight: '700', color: ink }}>
           {n}
         </Text>
       </View>

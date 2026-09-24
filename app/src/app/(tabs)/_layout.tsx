@@ -15,11 +15,11 @@ export default function TabsLayout() {
 
   return (
     <NativeTabs
-      tintColor={p.primary}
+      tintColor={p.accent}
       minimizeBehavior="onScrollDown"
       // Android (Material 3)
       backgroundColor={p.scheme === 'dark' ? p.backgroundElevated : undefined}
-      indicatorColor={p.scheme === 'dark' ? 'rgba(46,107,255,0.28)' : 'rgba(46,107,255,0.16)'}
+      indicatorColor={p.primarySoft}
       labelVisibilityMode="labeled"
     >
       {/* iOS 26+: pastilla de vidrio sobre la barra con el logo y el estado del llavero. */}

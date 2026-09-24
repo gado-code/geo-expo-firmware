@@ -118,7 +118,7 @@ export class KeychainLink {
       this.manager = new Manager({
         // Restauración de estado en iOS: si el sistema mata la app en segundo
         // plano, la vuelve a lanzar cuando el llavero notifica.
-        restoreStateIdentifier: 'geoexpo-keychain',
+        restoreStateIdentifier: 'ivy-keychain',
         restoreStateFunction: () => {},
       });
     } catch {

@@ -10,9 +10,15 @@ export interface Palette {
   textSecondary: string;
   textTertiary: string;
   separator: string;
+  /** Relleno ámbar (botones, selección). Encima va `onPrimary`. */
   primary: string;
-  primaryText: string;
-  secondary: string;
+  onPrimary: string;
+  /** Ámbar legible como texto/icono sobre el fondo de este modo. */
+  accent: string;
+  /** Amarillo pastel para superficies. Encima va `onPrimary`. */
+  pastel: string;
+  /** Tinte suave del ámbar para indicadores y fondos seleccionados. */
+  primarySoft: string;
   danger: string;
   dangerDeep: string;
   warning: string;
@@ -23,44 +29,46 @@ export interface Palette {
   ambient: [string, string, string];
 }
 
-export const light: Palette = {
-  scheme: 'light',
-  background: '#F2F3F7',
-  backgroundElevated: '#FFFFFF',
-  surface: '#FFFFFF',
-  surfaceBorder: 'rgba(0,0,0,0.06)',
-  text: '#0B0D12',
-  textSecondary: '#5B6170',
-  textTertiary: '#9AA0AD',
-  separator: 'rgba(60,60,67,0.18)',
+const shared = {
   primary: brand.primary,
-  primaryText: '#FFFFFF',
-  secondary: brand.secondary,
+  onPrimary: brand.onPrimary,
+  pastel: brand.pastel,
   danger: brand.danger,
   dangerDeep: brand.dangerDeep,
   warning: brand.warning,
   success: brand.success,
+};
+
+export const light: Palette = {
+  ...shared,
+  scheme: 'light',
+  background: '#FFFBF2',
+  backgroundElevated: '#FFFFFF',
+  surface: '#FFFFFF',
+  surfaceBorder: 'rgba(120,80,0,0.08)',
+  text: '#1F1705',
+  textSecondary: '#6B5E45',
+  textTertiary: '#A3967C',
+  separator: 'rgba(90,70,30,0.16)',
+  accent: brand.accentLight,
+  primarySoft: 'rgba(245,163,11,0.20)',
   glassFallback: 'rgba(255,255,255,0.78)',
-  ambient: ['#E9EFFF', '#F2F3F7', '#E6FBF7'],
+  ambient: ['#FFEFC2', '#FFFBF2', '#FFF5D6'],
 };
 
 export const dark: Palette = {
+  ...shared,
   scheme: 'dark',
-  background: '#07080C',
-  backgroundElevated: '#12141B',
-  surface: '#15171F',
-  surfaceBorder: 'rgba(255,255,255,0.08)',
-  text: '#F5F6FA',
-  textSecondary: '#A4AAB8',
-  textTertiary: '#6B7080',
-  separator: 'rgba(84,84,88,0.5)',
-  primary: brand.primary,
-  primaryText: '#FFFFFF',
-  secondary: brand.secondary,
-  danger: brand.danger,
-  dangerDeep: brand.dangerDeep,
-  warning: brand.warning,
-  success: brand.success,
-  glassFallback: 'rgba(28,30,38,0.72)',
-  ambient: ['#0B1330', '#07080C', '#04201D'],
+  background: '#0D0B07',
+  backgroundElevated: '#1A1610',
+  surface: '#1E1A12',
+  surfaceBorder: 'rgba(255,220,150,0.09)',
+  text: '#FFF8E8',
+  textSecondary: '#C2B59A',
+  textTertiary: '#7D725C',
+  separator: 'rgba(255,230,180,0.14)',
+  accent: brand.accentDark,
+  primarySoft: 'rgba(245,163,11,0.28)',
+  glassFallback: 'rgba(38,32,20,0.72)',
+  ambient: ['#2B2008', '#0D0B07', '#1E1705'],
 };

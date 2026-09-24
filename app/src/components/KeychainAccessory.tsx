@@ -7,7 +7,7 @@ import { Icon } from './Icon';
 import { Text } from './Text';
 import { describeLink } from './linkStatus';
 import { useKeychain } from '@/state/KeychainProvider';
-import { usePalette } from '@/theme';
+import { brand, usePalette } from '@/theme';
 
 /**
  * Accesorio inferior de iOS 26: la pastilla de Liquid Glass que flota sobre la
@@ -42,7 +42,7 @@ export function KeychainAccessory() {
           <View style={styles.statusLine}>
             <View style={[styles.dot, { backgroundColor: alerting ? p.danger : st.color }]} />
             <Text variant="caption" tone="secondary" numberOfLines={1}>
-              {link.deviceName ?? 'GEO-EXPO Alert'}
+              {link.deviceName ?? brand.name}
             </Text>
           </View>
         )}
@@ -53,7 +53,7 @@ export function KeychainAccessory() {
             ios="speaker.wave.3.fill"
             android="volume_up"
             size={20}
-            color={link.beacon ? p.primary : p.textSecondary}
+            color={link.beacon ? p.accent : p.textSecondary}
           />
         </Pressable>
       )}

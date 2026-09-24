@@ -34,16 +34,16 @@ export interface Settings {
 export const defaultSettings: Settings = {
   countdownSeconds: 10,
   shareLocation: true,
-  message: 'Necesito ayuda. He activado mi alerta GEO-EXPO.',
+  message: 'Necesito ayuda. He activado mi alerta Ivy.',
   emergencyNumber: '123',
   haptics: true,
 };
 
 const KEYS = {
-  contacts: 'geoexpo/contacts/v1',
-  history: 'geoexpo/history/v1',
-  settings: 'geoexpo/settings/v1',
-  device: 'geoexpo/device/v1',
+  contacts: 'ivy/contacts/v1',
+  history: 'ivy/history/v1',
+  settings: 'ivy/settings/v1',
+  device: 'ivy/device/v1',
 } as const;
 
 const HISTORY_LIMIT = 200;
