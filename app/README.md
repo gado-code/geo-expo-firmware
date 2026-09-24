@@ -66,7 +66,23 @@ Colores, todos en [`src/theme/brand.ts`](src/theme/brand.ts):
 - El llavero sigue anunciándose como `GEOEXPO-ALERT` porque ese nombre lo pone el
   firmware; la app no filtra por nombre, así que da igual para conectar.
 
-## Cómo probarla
+## Instalarla en Android (gratis)
+
+Cada cambio en `app/` compila solo un APK en GitHub
+([`.github/workflows/android-apk.yml`](../.github/workflows/android-apk.yml)).
+
+1. En el móvil Android, entra con tu cuenta de GitHub al repositorio →
+   **Releases** → **android-latest** → descarga **`ivy.apk`**.
+2. Ábrelo. Android pedirá permitir «instalar apps de fuentes desconocidas» para
+   el navegador: acéptalo. Si Play Protect avisa, «Instalar de todos modos».
+3. Abre Ivy y acepta los permisos (dispositivos cercanos, notificaciones,
+   ubicación).
+
+Para actualizar, descarga el nuevo `ivy.apk` e instálalo encima: se conservan
+los contactos y el historial. Es un APK firmado con la clave de pruebas de Expo:
+vale para probar, no para Google Play. Sólo incluye `arm64-v8a` (casi todos los
+móviles de los últimos años).
+
 
 La app usa Bluetooth nativo (`react-native-ble-plx`), así que **no funciona en
 Expo Go**: hace falta un *development build*. Sin llavero, todo se puede probar

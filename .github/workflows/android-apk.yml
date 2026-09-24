@@ -1,0 +1,85 @@
+# Compila la app Ivy para Android y publica el APK para instalarlo a mano.
+#
+# Se ejecuta sola con cada cambio en app/ y también a mano desde la pestaña
+# Actions. El APK queda en la release «android-latest» del repositorio
+# (Releases → android-latest → ivy.apk), listo para descargar desde el móvil.
+#
+# Está firmado con la clave de pruebas de Expo: sirve para instalar a mano,
+# no para Google Play.
+name: APK de Android
+
+on:
+  push:
+    paths:
+      - 'app/**'
+      - '.github/workflows/android-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Dependencias
+        run: npm ci
+
+      - name: Pruebas y revisiones
+        run: |
+          npm test
+          npx tsc --noEmit
+          npx expo lint
+
+      - name: Proyecto nativo de Android
+        run: npx expo prebuild --platform android --no-install --clean
+
+      - name: Compilar APK
+        working-directory: app/android
+        # Sólo arm64: es la de casi todos los móviles actuales y compila en la
+        # cuarta parte de tiempo que las cuatro arquitecturas.
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+
+      - name: Renombrar
+        run: cp android/app/build/outputs/apk/release/app-release.apk ivy.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ivy-apk
+          path: app/ivy.apk
+          retention-days: 30
+
+      - name: Publicar en la release android-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="APK de Ivy compilado desde ${GITHUB_REF_NAME} (${GITHUB_SHA::7}). Descarga ivy.apk en el móvil Android e instálalo."
+          if gh release view android-latest >/dev/null 2>&1; then
+            gh release upload android-latest ivy.apk --clobber
+            gh release edit android-latest --notes "$NOTES"
+          else
+            gh release create android-latest ivy.apk --prerelease --title "Ivy · APK de Android" --notes "$NOTES" --target "$GITHUB_SHA"
+          fi
