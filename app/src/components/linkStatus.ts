@@ -31,7 +31,7 @@ export function describeLink(s: LinkSnapshot, p: Palette): StatusView {
     case 'unavailable':
       return {
         label: 'Bluetooth no disponible',
-        detail: 'Necesitas la build de desarrollo (no Expo Go). Puedes probar en modo demo.',
+        detail: 'En Expo Go no hay Bluetooth. Prueba la app en modo demo.',
         color: p.textTertiary,
         live: false,
       };
