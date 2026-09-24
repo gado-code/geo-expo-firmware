@@ -1,4 +1,4 @@
-# GEO-EXPO LoRa · nodo (E1 punto a punto → E2 multi-salto)
+# Ivy LoRa · nodo (E1 punto a punto → E2 multi-salto)
 
 Subproyecto **independiente** del firmware del llavero. Dos placas **Heltec
 WiFi LoRa 32 V3** (ESP32-S3 + SX1262) se hablan por LoRa a 915–928 MHz, primero

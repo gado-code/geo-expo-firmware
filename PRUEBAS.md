@@ -1,4 +1,4 @@
-# PRUEBAS · GEO-EXPO ALERT (firmware etapa 1)
+# PRUEBAS · Ivy, firmware del llavero (antes GEO-EXPO ALERT)
 
 Placa: ESP32 DevKit V1 · Firmware: `src/main.cpp` · Última sesión con la placa: **18-sep-2026** · Última revisión del código: **19-sep-2026**
 

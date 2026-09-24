@@ -1,4 +1,16 @@
-# GEO-EXPO ALERT · Firmware etapa 1
+# Ivy · Firmware del llavero (antes GEO-EXPO ALERT)
+
+> **El proyecto se llama ahora Ivy** y vive en la organización
+> [**IVY-Alert**](https://github.com/IVY-Alert):
+>
+> | Repositorio | Qué es |
+> |---|---|
+> | **[`ivy-firmware`](https://github.com/IVY-Alert/ivy-firmware)** (este) | Firmware del llavero (ESP32 DevKit V1) y el subproyecto LoRa ([`lora/`](lora/)) |
+> | **[`ivy-app`](https://github.com/IVY-Alert/ivy-app)** (privado) | App móvil Ivy, iPhone y Android. Habla con este firmware siguiendo [`INTEGRACION-APP.md`](INTEGRACION-APP.md) |
+>
+> ⚠️ El llavero **sigue anunciándose por Bluetooth como `GEOEXPO-ALERT`**: es
+> parte del contrato congelado con la app y no cambia con el nombre del
+> proyecto. Cambiarlo es un cambio coordinado con el equipo de la app.
 
 Dispositivo de alerta personal para el proyecto de física. Esta etapa corre en
 una **ESP32 DevKit V1 (ESP32-WROOM-32)** usando **solo los periféricos

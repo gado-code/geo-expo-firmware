@@ -1,9 +1,11 @@
-# Integración app ↔ dispositivo · GEO-EXPO ALERT
+# Integración app ↔ dispositivo · Ivy (antes GEO-EXPO ALERT)
 
 Documento para el equipo que desarrolla la **app Android**. Describe cómo hablar
 con el dispositivo por Bluetooth Low Energy.
 
-- **Firmware:** https://github.com/gado-code/geo-expo-firmware
+- **Firmware:** https://github.com/IVY-Alert/ivy-firmware (antes `gado-code/geo-expo-firmware`;
+  la dirección vieja redirige sola)
+- **App (iPhone y Android):** https://github.com/IVY-Alert/ivy-app (privado)
 - **Estado:** el contrato de esta página está **congelado y verificado en hardware**.
   Podéis empezar a programar contra él sin esperar a nada más.
 - **Reparto:** vosotros hacéis la app **Android**; la de **iPhone** la hacemos nosotros.

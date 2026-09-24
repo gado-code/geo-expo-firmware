@@ -1,4 +1,4 @@
-# PRUEBAS · GEO-EXPO LoRa (nodo Heltec V3)
+# PRUEBAS · Ivy LoRa (nodo Heltec V3)
 
 Diseño: [`DISENO.md`](DISENO.md) · Manual: [`README.md`](README.md) · Última
 actualización: **19-sep-2026**

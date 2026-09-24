@@ -1,4 +1,4 @@
-# GEO-EXPO LoRa · Diseño de la red (E1 punto a punto → E2 multi-salto)
+# Ivy LoRa · Diseño de la red (E1 punto a punto → E2 multi-salto)
 
 > **Estado:** diseño, 18-sep-2026. Todavía no hay código en `lora/`.
 > **Placas:** 2 × Heltec WiFi LoRa 32 **V3** (ESP32-S3 + SX1262).
