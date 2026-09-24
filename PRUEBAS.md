@@ -186,6 +186,51 @@ de la incidencia I4, solo el de Bluetooth.
 
 ---
 
+## 3-quinquies. De extremo a extremo con la app Ivy (Android) — 24-sep
+
+**La primera prueba completa del sistema**: botón del llavero → BLE → app Ivy.
+Se hizo de noche y sin nadie delante, así que las pulsaciones se simularon por
+el DTR del USB (se flasheó el firmware con BOOT activo sólo para la prueba y
+después se **restauró** `-D BOOT_BUTTON_ENABLED=0`, comprobando que el DTR ya
+no genera nada). Cada paso se cruzó con tres fuentes: el puerto serie de la
+ESP32, el `logcat` del teléfono y capturas de pantalla.
+
+- **Teléfono**: Samsung Galaxy A13 (SM-A135M), Android 13, **sin SIM**.
+  Controlado entero por ADB y scrcpy porque la pantalla está rota.
+- **App**: `ivy.apk` 1.0.0 (`com.ivy.app`), release `android-latest`
+  compilada desde el commit `0662a07` de la rama de la app.
+- **Capturas**: `Documents\Ivy-pruebas\capturas-2026-09-24\` en el PC.
+
+| # | Caso | Resultado | OK |
+|---|---|---|:--:|
+| E2E.1 | Instalar la app | El APK viejo **no se instalaba** (`INSTALL_FAILED_NO_MATCHING_ABIS`): sólo traía `arm64-v8a` y el A13 lleva un Android de **32 bits**. Arreglado en el workflow (`0662a07`); el APK nuevo se instaló y usa `armeabi-v7a` | **x** |
+| E2E.2 | Vincular | La app encontró `GEOEXPO-ALERT` («Muy cerca») y conectó: «Protegido: tu llavero está listo», −46 dBm. MTU negociado **185** y suscripción a TX correcta. Al conectar, la app manda un `BEACON:OFF` para empezar en estado conocido | **x** |
+| E2E.3 | `ALERT:1` | Llavero: `ALERT:1 (enviado por BLE)`. App: pantalla de alerta con cuenta atrás → «SOS · Alerta confirmada». «Llamar al 123» es un botón: **no marca solo** | **x** |
+| E2E.4 | `ALERT:1` + `CANCEL` | `CANCEL` 4 s después. App: **«Alerta cancelada — La cancelaste desde el llavero. No se ha avisado a nadie.»** | **x** |
+| E2E.5 | `ALERT:2` | App: **«ALERTA PROLONGADA»** con cuenta atrás, «Pulsa el llavero otra vez para cancelar», botones «Estoy bien, cancelar» y «Avisar ya»; al vencer, «Alerta confirmada» | **x** |
+
+### Hallazgos para el equipo de la app
+
+1. **El APK dejaba fuera a los móviles de 32 bits.** Los Samsung de gama baja
+   (A03, A04, A13…) llevan procesador de 64 bits pero Android de 32, y son de
+   los más vendidos en Colombia. Ya arreglado (`0662a07`, compila
+   `armeabi-v7a` y `arm64-v8a`).
+2. **Un aviso del sistema tapa la alerta entera.** Si el teléfono tiene la
+   ubicación apagada, al pedir la posición Android muestra el diálogo de
+   Google «Precisión de la ubicación», que se queda encima de **toda** la
+   cuenta atrás: la persona no ve el contador, ni «Estoy bien, cancelar», ni
+   la confirmación de que canceló. Salió en **cada** alerta. Además la
+   pantalla confirmada se queda en «Obteniendo ubicación…» sin terminar.
+   Propuesta: comprobar la ubicación **al configurar la app**, no en mitad de
+   una alerta, y mostrar «ubicación desactivada» en vez de un spinner eterno.
+3. **Un botón cambia de significado bajo el dedo.** «Estoy bien, cancelar»
+   (cuenta atrás) y «Llamar al 123» (alerta confirmada) ocupan **el mismo
+   sitio de la pantalla**. Alguien que pulsa «cancelar» justo cuando vence el
+   plazo puede acabar pulsando «Llamar al 123». Propuesta: separarlos o
+   bloquear los toques un segundo tras el cambio de pantalla.
+
+---
+
 ## 3.bis. Módulo GPS sin receptor físico
 
 Las tramas se inyectan por el monitor serie (o por BLE con un WRITE en RX: es
