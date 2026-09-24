@@ -1,68 +1,31 @@
-import { LinearGradient } from 'expo-linear-gradient';
-import { StyleSheet, View } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 
 import { brand } from '@/theme';
 
 /**
- * LOGO PROVISIONAL DE IVY: un llavero (anilla + mando con su botón), en ámbar.
- * Cuando llegue el logo definitivo, sustituye este componente por un
- * <Image source={require('@/../assets/brand/logo.png')} /> del mismo tamaño;
- * se usa en la barra inferior (iOS), en Inicio, en la vinculación y en la alerta.
+ * Logo de Ivy: la hoja. Mismos trazos que assets/brand/logo.svg (el original),
+ * recortados a la hoja para que llene el cuadro sin margen.
+ *
+ * `pulse` la tiñe de rojo mientras hay una alerta en curso (barra inferior).
  */
 export function BrandMark({ size = 36, pulse = false }: { size?: number; pulse?: boolean }) {
-  const stroke = Math.max(1.5, size * 0.07);
-  const ring = size * 0.3;
-  const fobW = size * 0.38;
-  const fobH = size * 0.5;
-  const button = fobW * 0.52;
   return (
-    <LinearGradient
-      colors={['#FFD95A', brand.primary]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={[styles.tile, { width: size, height: size, borderRadius: size * 0.3 }]}
-    >
-      {/* anilla */}
-      <View
-        style={{
-          position: 'absolute',
-          top: size * 0.14,
-          left: size * 0.16,
-          width: ring,
-          height: ring,
-          borderRadius: ring / 2,
-          borderWidth: stroke,
-          borderColor: brand.onPrimary,
-        }}
+    <Svg width={size} height={size} viewBox="-4 5 208 208" accessibilityLabel={brand.name}>
+      <Path d="M100 120 L100 206" stroke={brand.ink} strokeWidth={8.5} strokeLinecap="round" fill="none" />
+      <Path
+        d="M100 120 C70 118 30 128 14 104 C34 96 46 76 40 50 C62 58 80 50 100 12 C120 50 138 58 160 50 C154 76 166 96 186 104 C170 128 130 118 100 120 Z"
+        fill={pulse ? brand.danger : brand.primary}
+        stroke={brand.ink}
+        strokeWidth={7}
+        strokeLinejoin="round"
       />
-      {/* mando */}
-      <View
-        style={{
-          position: 'absolute',
-          top: size * 0.32,
-          left: size * 0.36,
-          width: fobW,
-          height: fobH,
-          borderRadius: fobW * 0.42,
-          backgroundColor: '#FFFBF2',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transform: [{ rotate: '-18deg' }],
-        }}
-      >
-        <View
-          style={{
-            width: button,
-            height: button,
-            borderRadius: button / 2,
-            backgroundColor: pulse ? brand.danger : brand.onPrimary,
-          }}
-        />
-      </View>
-    </LinearGradient>
+      <Path
+        d="M100 114 L100 44 M100 97 L64 80 M100 97 L136 80"
+        stroke={brand.cream}
+        strokeWidth={7}
+        strokeLinecap="round"
+        fill="none"
+      />
+    </Svg>
   );
 }
-
-const styles = StyleSheet.create({
-  tile: { alignItems: 'center', justifyContent: 'center', borderCurve: 'continuous', overflow: 'hidden' },
-});

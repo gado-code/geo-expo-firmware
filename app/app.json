@@ -21,7 +21,7 @@
     "android": {
       "package": "com.ivy.app",
       "adaptiveIcon": {
-        "backgroundColor": "#F5A30B",
+        "backgroundColor": "#FFE9A3",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"

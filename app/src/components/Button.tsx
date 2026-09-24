@@ -67,7 +67,7 @@ export function Button({
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
-      android_ripple={{ color: kind === 'primary' ? 'rgba(43,28,0,0.14)' : 'rgba(255,255,255,0.25)', borderless: false }}
+      android_ripple={{ color: kind === 'primary' ? 'rgba(46,36,55,0.14)' : 'rgba(255,255,255,0.25)', borderless: false }}
       style={({ pressed }) => [
         styles.base,
         {

@@ -2,15 +2,18 @@
  * BRANDING DE IVY.
  *
  * Todo el color de la app sale de aquí: ninguna pantalla lleva colores
- * escritos a mano. El logo provisional está en src/components/BrandMark.tsx.
+ * escritos a mano. Los tres primeros son los del logo (assets/brand/logo.svg).
  */
 export const brand = {
   name: 'Ivy',
 
-  /** Ámbar: relleno de botones principales, selección, acentos. */
-  primary: '#F5A30B',
-  /** Tinta sobre el ámbar. El blanco sobre ámbar no se lee bien. */
-  onPrimary: '#2B1C00',
+  /** Ámbar de la hoja: relleno de botones principales, selección, acentos. */
+  primary: '#FFA928',
+  /** Tinta del contorno del logo. Va encima del ámbar: el blanco no se lee. */
+  ink: '#2E2437',
+  onPrimary: '#2E2437',
+  /** Crema de las nervaduras. */
+  cream: '#FFF6E6',
   /** Ámbar oscuro para texto e iconos sobre fondos claros. */
   accentLight: '#A86200',
   /** Ámbar claro para texto e iconos sobre fondos oscuros. */

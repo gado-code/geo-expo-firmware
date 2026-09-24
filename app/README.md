@@ -44,18 +44,23 @@ plano, el aviso de «Alerta confirmada» sale igual, y se anula si llega `CANCEL
 
 ## Branding
 
-**Ivy**, en **ámbar** (`#F5A30B`) y **amarillo pastel** (`#FFE9A3`). Todo el
-color sale de **un solo archivo**: [`src/theme/brand.ts`](src/theme/brand.ts).
+**Ivy**. El logo es una hoja: [`assets/brand/logo.svg`](assets/brand/logo.svg)
+es el original y [`src/components/BrandMark.tsx`](src/components/BrandMark.tsx)
+lo dibuja en la app (barra inferior, Inicio, Vincular y alerta) con los mismos
+trazos. Los iconos de `assets/` (iOS, adaptativo de Android, splash, favicon)
+salen de ese mismo SVG, sobre un fondo crema → amarillo pastel.
 
-- Sobre el ámbar el texto va en **tinta oscura** (`#2B1C00`), no en blanco: el
-  blanco sobre ámbar no se lee bien. Como texto o icono sobre fondo claro se usa
-  un ámbar más oscuro (`#A86200`), y sobre fondo oscuro uno más claro
-  (`#FFC247`).
+Colores, todos en [`src/theme/brand.ts`](src/theme/brand.ts):
+
+| | Color | Uso |
+|---|---|---|
+| Ámbar | `#FFA928` | la hoja, botones principales, selección |
+| Tinta | `#2E2437` | contorno del logo, texto principal y texto sobre el ámbar (el blanco sobre ámbar no se lee) |
+| Crema | `#FFF6E6` | nervaduras del logo, fondos |
+| Amarillo pastel | `#FFE9A3` | superficies suaves, fondo del icono |
+| Ámbar oscuro / claro | `#A86200` / `#FFC247` | texto e iconos de acento en modo claro / oscuro |
+
 - El rojo de las alertas se mantiene a propósito: una alerta tiene que asustar.
-- El logo es **provisional** (un llavero con su botón):
-  [`src/components/BrandMark.tsx`](src/components/BrandMark.tsx) y los PNG de
-  `assets/` (icono, splash, icono adaptativo de Android). Cuando llegue el logo
-  definitivo se sustituyen esos dos sitios.
 - Identificador de la app: `com.ivy.app` (en `app.json`). Hay que confirmarlo
   antes de publicar: en las tiendas tiene que ser único.
 - El llavero sigue anunciándose como `GEOEXPO-ALERT` porque ese nombre lo pone el

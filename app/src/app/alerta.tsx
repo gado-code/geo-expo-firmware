@@ -67,7 +67,7 @@ export default function AlertaScreen() {
       <LinearGradient colors={colors} style={StyleSheet.absoluteFill} />
       <View style={[styles.content, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
         <View style={styles.header}>
-          <BrandMark size={34} pulse={alert.phase === 'countdown'} />
+          <BrandMark size={34} />
           <Text variant="headline" tone="inverse">
             {alert.alert.source === 'demo' ? 'Prueba de alerta' : 'Alerta del llavero'}
           </Text>
