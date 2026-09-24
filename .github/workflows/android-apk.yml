@@ -59,9 +59,13 @@ jobs:
 
       - name: Compilar APK
         working-directory: app/android
-        # Sólo arm64: es la de casi todos los móviles actuales y compila en la
-        # cuarta parte de tiempo que las cuatro arquitecturas.
-        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+        # arm64-v8a Y armeabi-v7a. NO basta con arm64: muchos Samsung de gama
+        # baja (Galaxy A03, A04, A13...) llevan un procesador de 64 bits pero un
+        # Android de 32 bits, y con sólo arm64 el APK no se instala
+        # (INSTALL_FAILED_NO_MATCHING_ABIS; visto en un Galaxy A13 SM-A135M con
+        # Android 13). Son de los móviles más vendidos en Colombia. x86 y x86_64
+        # sólo sirven para emuladores y siguen fuera para no alargar la compilación.
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a --no-daemon
 
       - name: Renombrar
         run: cp android/app/build/outputs/apk/release/app-release.apk ivy.apk

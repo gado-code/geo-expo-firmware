@@ -80,8 +80,9 @@ Cada cambio en `app/` compila solo un APK en GitHub
 
 Para actualizar, descarga el nuevo `ivy.apk` e instálalo encima: se conservan
 los contactos y el historial. Es un APK firmado con la clave de pruebas de Expo:
-vale para probar, no para Google Play. Sólo incluye `arm64-v8a` (casi todos los
-móviles de los últimos años).
+vale para probar, no para Google Play. Incluye `arm64-v8a` y `armeabi-v7a`: la
+segunda hace falta para los Samsung de gama baja (Galaxy A03, A04, A13...), que
+llevan un Android de 32 bits aunque el procesador sea de 64.
 
 
 La app usa Bluetooth nativo (`react-native-ble-plx`), así que **no funciona en
